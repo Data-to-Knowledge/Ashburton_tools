@@ -145,7 +145,9 @@ class myHydroTool():
             self.estimate_usage()
         else:
             self.date_allo_usage = pd.read_csv(os.path.join(self.results_path, self.config.get('ESTIMATE_USAGE', 'estimated_usage_csv')), parse_dates=True, dayfirst=True)
-        print(self.date_allo_usage)    
+#        print(self.date_allo_usage)
+
+        print(self.flow_sites_gdf)
         
         
             
