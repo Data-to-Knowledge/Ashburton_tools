@@ -30,8 +30,10 @@ ts_summ_table = 'TSDataNumericDailySumm'
 ts_table = 'TSDataNumericDaily'
 site_table = 'ExternalSite'
 
-min_obs = 2
-buf_dist = 10000
+min_obs = 3
+buf_dist = 20000
+
+savefig_path = r'C:\Active\Projects\Ashburton\naturalisation\results'
 
 
 #-Get lowflow sites
@@ -95,12 +97,15 @@ ts_df_sites = pd.unique(ts_df.ExtSiteID).tolist()
 all_flow_sites = None; del all_flow_sites
 
 #-Check if there is data for all lowflow sites
+#-convert flow sites to int lists
+#flow_sites = [int(i) for i in flow_sites]
 for j in flow_sites:
     if j not in ts_df_sites:
         print('There is zero flow data for site %s, or record of observations for this site was too short.' %j) 
 #-Minimum and maximum date of all data
 min_date = ts_df.DateTime.min()
 max_date = ts_df.DateTime.max()
+
 
 #-Fill dataframe with data for min_date through max_date
 df_final = pd.DataFrame(index=pd.date_range(min_date, max_date, freq='D'), columns=ts_df_sites)
@@ -119,160 +124,171 @@ for j in ts_df_sites:
 ts_df = None; df_short_group = None; del ts_df, df_short_group
 
 # print(df_final.head())
-# df_final.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df.csv')
+df_final.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df.csv')
+#df_final = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df.csv', index_col=0, parse_dates=True, dayfirst=True)
 
-# #-loop over the lowflow sites and calculate regressions
-# df_regression = pd.DataFrame(columns=['y', 'x', 'mean_y', 'mean_x', 'nobs', 'rmse', 'Adj. R2-squared', 'p-value', 'slope', 'intercept', 'power', 'fittype'])
-# i=0
-# for j in flow_sites:
-# 
-#     for s in df_final.columns:
-#          
-#         sel_df = df_final[[j, s]]
-#         sel_df.replace(0., np.nan, inplace=True)
-#         sel_df.dropna(inplace=True)
-#         #-only fit for sites that have the minimum number of observations
-#         if len(sel_df)>=min_obs:
-#             try:
-#                 #-set x and y
-#                 x = sel_df[[s]]
-#                 x = sm.add_constant(x)  #-needed for intercept
-#                 y = sel_df[[j]]
-#                  
-#                 #-linear fit
-#                 model = sm.OLS(y, x).fit()
-#                  
-#                 #-predict using the model
-#                 predictions = model.predict(x) # make the predictions by the model
-#                 rmse_val = np.sqrt(  np.mean(   (predictions.to_numpy() - y.to_numpy())**2   )  )
-#                  
-#                 #-fill dataframe with stats for linear fit
-#                 df_regression.loc[i, 'y'] = j
-#                 df_regression.loc[i, 'x'] = s
-#                 df_regression.loc[i, 'mean_y'] = np.nanmean(y)
-#                 df_regression.loc[i, 'mean_x'] = np.nanmean(x[s].to_numpy())
-#                 df_regression.loc[i, 'nobs'] = model.nobs
-#                 df_regression.loc[i, 'rmse'] = rmse_val
-#                 df_regression.loc[i, 'Adj. R2-squared'] = model.rsquared_adj
-#                 df_regression.loc[i, 'p-value'] = model.f_pvalue
-#                 df_regression.loc[i, 'slope'] = model.params[1]
-#                 df_regression.loc[i, 'intercept'] = model.params[0]
-#                 df_regression.loc[i, 'fittype'] = 'linear'
-#                  
-#                 i+=1
-#  
-# #                 #-figure for linear fit
-# #                 fig, ax = plt.subplots()
-# #                 plt.scatter(x[[s]], y)
-# #                 plt.plot(x[[s]], predictions)
-# #                 plt.show()
-#             except:
-#                 print('Could not establish linear fit for %s and %s...' %(j,s))
-# 
-#             try:
-#                 #-set x and y
-#                 x = sel_df[[s]]
-#                 x = sm.add_constant(x)  #-needed for intercept
-#                 y = sel_df[[j]]                 
-# 
-#                 #-***********************************************************
-#                 #-                           y = ax^b
-#                 #-                           log(y) = log(a) + b*log(x)
-#                 #-***********************************************************
-#                 logY = np.log(y)
-#                 logX = np.log(x[[s]])
-#                 logX = sm.add_constant(logX)
-#                 model = sm.OLS(logY, logX).fit()
-#  
-#                 x = x[s].to_numpy()
-#                 #-predictions of the exact x values for calculating rmse            
-#                 predictions = np.exp(model.params[0]) * x**model.params[1]
-#                 rmse_val = np.sqrt(  np.mean(   (predictions - y.to_numpy())**2   )  )
-#                  
-#                 #-fill dataframe with stats for power fit
-#                 df_regression.loc[i, 'y'] = j
-#                 df_regression.loc[i, 'x'] = s
-#                 df_regression.loc[i, 'mean_y'] = np.nanmean(y)
-#                 df_regression.loc[i, 'mean_x'] = np.nanmean(x)
-#                 df_regression.loc[i, 'nobs'] = model.nobs
-#                 df_regression.loc[i, 'rmse'] = rmse_val
-#                 df_regression.loc[i, 'Adj. R2-squared'] = model.rsquared_adj
-#                 df_regression.loc[i, 'p-value'] = model.f_pvalue
-#                 df_regression.loc[i, 'slope'] = np.exp(model.params[0])
-#                 df_regression.loc[i, 'power'] = model.params[1]
-#                 df_regression.loc[i, 'fittype'] = 'power'
-#                  
-# #                 #-create a range of x values for smooth curve
-# #                 x1 = np.arange(np.min(x), np.max(x), (np.max(x) - np.min(x))/100)
-# #                 #-smooth curve to display
-# #                 predictions = np.exp(model.params[0]) * x1**model.params[1]
-# #                 fig, ax = plt.subplots()
-# #                 plt.scatter(x, y)
-# #                 plt.plot(x1, predictions)
-# #                 plt.show()
-#  
-#                 i+=1
-#                  
-#             except:
-#                 print('Could not establish power fit for %s and %s...' %(j,s))
-# sel_df = None; del sel_df
-# #-calculate absolute R2 for sorting
-# df_regression['Adj. R2-squared absolute'] = df_regression['Adj. R2-squared'].abs()
-# #-remove negative slopes
-# df_regression.loc[df_regression.slope<0,:] = np.nan
-# df_regression.dropna(how='all', inplace=True)
-# 
-# df_regression.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test.csv', index=False)
-# df_regression = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test.csv')             
-# print(df_regression)
-# 
-# 
-# #-loop over lowflow sites, and select best four fits by sorting on R2, rmse, nobs
-# df_regression_best = pd.DataFrame(columns=df_regression.columns)
-# for j in flow_sites:
-#     sel_df = df_regression.loc[df_regression.y == j]
-#     sel_df.sort_values(by=['Adj. R2-squared absolute', 'rmse', 'nobs'], ascending=[False, True, False], inplace=True)
-#     sel_df = sel_df.iloc[0:6,:]
-#     df_regression_best = pd.concat([df_regression_best, sel_df])
-# sel_df = None; del sel_df
-# print(df_regression_best)
-#    
-# df_regression_best.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test_best.csv', index=False)
-df_regression_best = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test_best.csv')
+#-loop over the lowflow sites and calculate regressions
+df_regression = pd.DataFrame(columns=['y', 'x', 'mean_y', 'mean_x', 'nobs', 'rmse', 'Adj. R2-squared', 'p-value', 'slope', 'intercept', 'power', 'fittype'])
+i=0
+for j in flow_sites:
+ 
+    for s in df_final.columns:
+          
+        sel_df = df_final[[j, s]]
+        sel_df.replace(0., np.nan, inplace=True)
+        sel_df.dropna(inplace=True)
+        #-only fit for sites that have the minimum number of observations
+        if len(sel_df)>=min_obs:
+            try:
+                #-set x and y
+                x = sel_df[[s]]
+                x = sm.add_constant(x)  #-needed for intercept
+                y = sel_df[[j]]
+                  
+                #-linear fit
+                model = sm.OLS(y, x).fit()
+                  
+                #-predict using the model
+                predictions = model.predict(x) # make the predictions by the model
+                rmse_val = np.sqrt(  np.mean(   (predictions.to_numpy() - y.to_numpy())**2   )  )
+                  
+                #-fill dataframe with stats for linear fit
+                df_regression.loc[i, 'y'] = j
+                df_regression.loc[i, 'x'] = s
+                df_regression.loc[i, 'mean_y'] = np.nanmean(y)
+                df_regression.loc[i, 'mean_x'] = np.nanmean(x[s].to_numpy())
+                df_regression.loc[i, 'nobs'] = model.nobs
+                df_regression.loc[i, 'rmse'] = rmse_val
+                df_regression.loc[i, 'Adj. R2-squared'] = model.rsquared_adj
+                df_regression.loc[i, 'p-value'] = model.f_pvalue
+                df_regression.loc[i, 'slope'] = model.params[1]
+                df_regression.loc[i, 'intercept'] = model.params[0]
+                df_regression.loc[i, 'fittype'] = 'linear'
+                  
+                i+=1
+            except:
+                print('Could not establish linear fit for %s and %s...' %(j,s))
+ 
+            try:
+                #-set x and y
+                x = sel_df[[s]]
+                x = sm.add_constant(x)  #-needed for intercept
+                y = sel_df[[j]]                 
+ 
+                #-***********************************************************
+                #-                           y = ax^b
+                #-                           log(y) = log(a) + b*log(x)
+                #-***********************************************************
+                logY = np.log(y)
+                logX = np.log(x[[s]])
+                logX = sm.add_constant(logX)
+                model = sm.OLS(logY, logX).fit()
+  
+                x = x[s].to_numpy()
+                #-predictions of the exact x values for calculating rmse            
+                predictions = np.exp(model.params[0]) * x**model.params[1]
+                rmse_val = np.sqrt(  np.mean(   (predictions - y.to_numpy())**2   )  )
+                  
+                #-fill dataframe with stats for power fit
+                df_regression.loc[i, 'y'] = j
+                df_regression.loc[i, 'x'] = s
+                df_regression.loc[i, 'mean_y'] = np.nanmean(y)
+                df_regression.loc[i, 'mean_x'] = np.nanmean(x)
+                df_regression.loc[i, 'nobs'] = model.nobs
+                df_regression.loc[i, 'rmse'] = rmse_val
+                df_regression.loc[i, 'Adj. R2-squared'] = model.rsquared_adj
+                df_regression.loc[i, 'p-value'] = model.f_pvalue
+                df_regression.loc[i, 'slope'] = np.exp(model.params[0])
+                df_regression.loc[i, 'power'] = model.params[1]
+                df_regression.loc[i, 'fittype'] = 'power'
+                i+=1
+            except:
+                print('Could not establish power fit for %s and %s...' %(j,s))
+
+sel_df = None; del sel_df
+#-remove negative correlations
+df_regression.loc[df_regression['Adj. R2-squared']<0.,:] = np.nan
+df_regression.dropna(how='all', inplace=True)
+df_regression.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test.csv', index=False)
+#df_regression = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test.csv', dtype={'x': object, 'y': object})             
+ 
+ 
+#-loop over lowflow sites, and select best four fits by sorting on R2, rmse, nobs
+df_regression_best = pd.DataFrame(columns=df_regression.columns)
+for j in flow_sites:
+    sel_df = df_regression.loc[df_regression.y == j]
+    sel_df.sort_values(by=['Adj. R2-squared', 'rmse', 'nobs'], ascending=[False, True, False], inplace=True)
+    sel_df = sel_df.iloc[0:6,:]
+    df_regression_best = pd.concat([df_regression_best, sel_df])
+sel_df = None; del sel_df
+    
+df_regression_best.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test_best.csv', index=False)
+#df_regression_best = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test_best.csv', dtype={'x': object, 'y': object})
 
 #-make 6 plots for each site to visually pick the best
 unique_y = pd.unique(df_regression_best['y'])
 unique_y = list(unique_y)
 for j in flow_sites:
-    if int(j) in unique_y:
-
+    if j in unique_y:
         #-get regression results for site j
-        sel_df_regression = df_regression_best.loc[df_regression_best.y == int(j)]
-        #-get the y values
-        y = df_final[j].to_numpy()
+        sel_df_regression = df_regression_best.loc[df_regression_best.y == j]
+
         #-plot the best 6 fits
         fig = plt.figure(figsize=(11,8))
         kk=1
         for k in sel_df_regression.iterrows():
-            ax1 = plt.subplot(3,2,kk)
-            xSite = str(k[1]['x'])
-            x = df_final[xSite].to_numpy()
-            plt.scatter(x,y)
-            ax1.grid(True)
-            ax1.set_xlabel(xSite)
-            ax1.set_ylabel(j)
-            kk+=1
-
+            try:
+                ax1 = plt.subplot(3,2,kk)
+                xSite = k[1]['x']
+                ySite = k[1]['y']
+                
+                xy = df_final[[xSite, ySite]]
+                xy.dropna(inplace=True)
+                x = xy[xSite].to_numpy()
+                y = xy[ySite].to_numpy()
+    
+                xmin = np.nanmin(x)
+                xmax = np.nanmax(x)
+                dx = (xmax-xmin)/100
+                xvals = np.arange(xmin, xmax, dx)
+                
+                ymin = np.nanmin(y)
+                ymax = np.nanmax(y)
+                
+                #-Get the stats from the table
+                fit_type = k[1]['fittype']
+                if fit_type == 'linear':
+                    eq_str = 'y = %.3fx + %.3f' %(k[1]['slope'], k[1]['intercept'])
+                    predictions = k[1]['slope'] * xvals + k[1]['intercept']
+                else:
+                    eq_str = 'y = %.3fx$^{%.3f}$' %(k[1]['slope'], k[1]['power'])
+                    predictions = k[1]['slope'] * (xvals ** k[1]['power'])
+                r2 = k[1]['Adj. R2-squared']
+                rmse_val = k[1]['rmse']
+                p_val = k[1]['p-value']
+                nobs = k[1]['nobs']
+                plt.plot(xvals, predictions, label='fit')
+                plt.scatter(x,y, color='red', label='data')
+                ax1.grid(True)
+                ax1.set_xlabel('Flow at %s [m$^3$ s$^{-1}$]' %xSite)
+                ax1.set_ylabel('Flow at %s [m$^3$ s$^{-1}$]' %ySite)
+                ax1.legend(loc='lower right')
+                
+                dy = (ymax-ymin)/10
+                dx = (xmax-xmin)/10
+                
+                #-plot the stats in the plot
+                plt.text(xmin, ymax, eq_str)
+                plt.text(xmin, ymax-dy, 'R$^2$ %.2f' %r2)
+                plt.text(xmin, ymax-2*dy, 'RMSE %.2f' %rmse_val)
+                plt.text(xmin, ymax-3*dy, 'p-value %.2f' %p_val)
+                plt.text(xmin, ymax-4*dy, 'nobs %.0f' %nobs)
+                ax1.set_xlim([xmin-dx, xmax+dx])
+                ax1.set_ylim([ymin-dy, ymax+dy])
+                kk+=1
+            except:
+                pass
+ 
         fig.tight_layout()
-        plt.show()
-        break
-
-
-            
-                       
-        
-        
-    #     plt.sc
-    
-
-    
+        #plt.show(block=True)
+        plt.savefig(os.path.join(savefig_path, '%s_correlations.png' %ySite), dpi=300)
