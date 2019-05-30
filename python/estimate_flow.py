@@ -30,8 +30,9 @@ ts_summ_table = 'TSDataNumericDailySumm'
 ts_table = 'TSDataNumericDaily'
 site_table = 'ExternalSite'
 
-min_obs = 3
+min_obs = 4
 buf_dist = 20000
+filter_winter_flow = False
 
 savefig_path = r'C:\Active\Projects\Ashburton\naturalisation\results'
 
@@ -39,7 +40,6 @@ savefig_path = r'C:\Active\Projects\Ashburton\naturalisation\results'
 #-Get lowflow sites
 flow_sites_gdf = gpd.read_file(r'C:\Active\Projects\Ashburton\naturalisation\results\lowflow_sites.shp')
 flow_sites = flow_sites_gdf.flow_site.tolist()
-flow_sites_copy = flow_sites.copy()
 
 ## Read in datasettypes
 datasets = mssql.rd_sql(server, database, dataset_type_table, ['DatasetTypeID', 'CTypeID'], where_in={'FeatureID': [1], 'MTypeID': [2], 'CTypeID': [1, 2], 'DataCodeID': [1]})
@@ -47,7 +47,7 @@ datasets = mssql.rd_sql(server, database, dataset_type_table, ['DatasetTypeID', 
 #-Get datasetTypes for recorded data and manual data
 rec_datasetTypes = datasets[datasets.CTypeID == 1].DatasetTypeID.tolist()
 man_datasetTypes = datasets[datasets.CTypeID == 2].DatasetTypeID.tolist()
-all_datasetTypes = rec_datasetTypes
+all_datasetTypes = rec_datasetTypes.copy()
 all_datasetTypes.extend(man_datasetTypes)
 
 #-Get summary table for the lowflow sites
@@ -56,18 +56,17 @@ site_summ.FromDate = pd.to_datetime(site_summ.FromDate)
 site_summ.ToDate = pd.to_datetime(site_summ.ToDate)
 site_summ.drop('ModDate', axis=1, inplace=True)
 
-#-Throw out sites from summary table that have less records than 'min_obs'
+#-Throw out sites from summary table and lowflow sites that have less records than 'min_obs'
 too_short = site_summ.loc[site_summ.Count<min_obs, ['ExtSiteID','Count']]
 if len(too_short)>0:
     for j in too_short.iterrows():
         print('ExtSiteID %s is not used because it only has %s records, which is less than %s.' %(j[1]['ExtSiteID'], int(j[1]['Count']), min_obs))
         site_summ = site_summ.loc[site_summ['ExtSiteID']!=j[1]['ExtSiteID']]
-#-Lowflow sites to keep
-keep_sites = pd.unique(site_summ['ExtSiteID']).tolist()
+        flow_sites.remove(j[1]['ExtSiteID'])
 
 #-Get site ids for recorder and manual sites of the lowflow sites and create geodataframe for manually recorded lowflow sites
-rec_sites = site_summ.loc[(site_summ.DatasetTypeID.isin(rec_datasetTypes)) & (site_summ.ExtSiteID.isin(keep_sites)),'ExtSiteID'].tolist()
-man_sites = site_summ.loc[(site_summ.DatasetTypeID.isin(man_datasetTypes)) & (site_summ.ExtSiteID.isin(keep_sites)),'ExtSiteID'].tolist()
+rec_sites = site_summ.loc[site_summ.DatasetTypeID.isin(rec_datasetTypes),'ExtSiteID'].tolist()
+man_sites = site_summ.loc[site_summ.DatasetTypeID.isin(man_datasetTypes),'ExtSiteID'].tolist()
 man_sites_gdf = flow_sites_gdf[flow_sites_gdf.flow_site.isin(man_sites)].copy()
 
 #-get all recorder flow sites within a buffer distance from the manually recorded lowflow sites
@@ -83,22 +82,19 @@ all_recorder_flowsites = None; all_recorder_flowsites_gdf = None; del all_record
 
 
 #-merge list of lowflow sites with list of recorder sites in buffer to create list of all sites for which to extract data
-all_flow_sites = flow_sites
+all_flow_sites = flow_sites.copy()
 all_flow_sites.extend(pd.unique(all_recorder_flowsites_buffer_gdf.ExtSiteID).tolist())
 all_flow_sites = pd.DataFrame(columns=all_flow_sites)
 all_flow_sites = pd.unique(all_flow_sites.columns).tolist()
-flow_sites = flow_sites_copy; flow_sites_copy = None
 
 #-Get time-series of all_flow_sites
 ts_df = mssql.rd_sql(server, database, ts_table, ['ExtSiteID', 'DatasetTypeID', 'DateTime', 'Value', 'QualityCode'], where_in={'DatasetTypeID': all_datasetTypes, 'ExtSiteID': all_flow_sites})
-ts_df = ts_df.loc[ts_df.QualityCode>=100] #-everything otherwise than missing data
+ts_df = ts_df.loc[ts_df.QualityCode>100] #-everything otherwise than missing data
 ts_df.DateTime = pd.to_datetime(ts_df.DateTime)
 ts_df_sites = pd.unique(ts_df.ExtSiteID).tolist()
 all_flow_sites = None; del all_flow_sites
 
 #-Check if there is data for all lowflow sites
-#-convert flow sites to int lists
-#flow_sites = [int(i) for i in flow_sites]
 for j in flow_sites:
     if j not in ts_df_sites:
         print('There is zero flow data for site %s, or record of observations for this site was too short.' %j) 
@@ -122,9 +118,30 @@ for j in ts_df_sites:
     df_short_group.rename(columns={'Value':j}, inplace=True)
     df_final[[j]] = df_short_group
 ts_df = None; df_short_group = None; del ts_df, df_short_group
+df_final.dropna(how='all', inplace=True)
 
-# print(df_final.head())
-df_final.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df.csv')
+#-remove zero records
+df_final[df_final==0] = np.nan
+df_final.dropna(how='all', inplace=True)
+
+#-keep only winter flows for estimating correlations
+if filter_winter_flow:
+    df_final.reset_index(inplace=True)
+    df_final['Month'] = df_final['DateTime'].dt.strftime('%m').astype(np.int)
+    df_final.set_index('DateTime', inplace=True)
+    df_final = df_final.loc[(df_final.Month>4) & (df_final.Month<10)]
+
+
+# #-keep only values equal or below the median
+# for j in all_recorder_flowsites_buffer_gdf.ExtSiteID.tolist():
+#     q = df_final[[j]].dropna()
+#     q50 = np.median(q)
+#     df_final.loc[df_final[j]>=q50, j] = np.nan
+
+
+
+df_final.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df_all.csv')
+
 #df_final = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df.csv', index_col=0, parse_dates=True, dayfirst=True)
 
 #-loop over the lowflow sites and calculate regressions
@@ -132,7 +149,7 @@ df_regression = pd.DataFrame(columns=['y', 'x', 'mean_y', 'mean_x', 'nobs', 'rms
 i=0
 for j in flow_sites:
  
-    for s in df_final.columns:
+    for s in all_recorder_flowsites_buffer_gdf.ExtSiteID.tolist():
           
         sel_df = df_final[[j, s]]
         sel_df.replace(0., np.nan, inplace=True)
@@ -291,4 +308,7 @@ for j in flow_sites:
  
         fig.tight_layout()
         #plt.show(block=True)
-        plt.savefig(os.path.join(savefig_path, '%s_correlations.png' %ySite), dpi=300)
+        if filter_winter_flow:
+            plt.savefig(os.path.join(savefig_path, '%s_correlations_winteronly.png' %ySite), dpi=300)
+        else:
+            plt.savefig(os.path.join(savefig_path, '%s_correlations.png' %ySite), dpi=300)

@@ -298,21 +298,21 @@ class myHydroTool():
         month_dict = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
         #-Dictionary to replace Yes/No values with 1,0
         yes_no_dict = {'Yes': 1, 'No': 0, 'yes': 1, 'no': 0, 'YES': 1, 'NO': 0}
-          
+           
         #-Get list of SWAZ names for which to extract waps
         swaz_csv = os.path.join(self.inputs_path, self.config.get('CRC_WAP', 'swaz_csv'))
         SWAZ = list(pd.read_csv(swaz_csv).SWAZ.astype(str))
-          
+           
         #-Get bore depth cutoff
         well_depth = self.config.getint('CRC_WAP', 'well_depth')
-  
+   
         #-Get all the WAPs from the database that are within those SWAZs
         print('Getting all WAPs within the selected SWAZs...')                        
         SWAZ_waps = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_SW_WellsDetails', col_names = ['WellNo', 'SWAllocationZone', 'Depth'], where_in={'SWAllocationZone': SWAZ})
         SWAZ_waps.rename(columns={'SWAllocationZone':'SWAZ', 'WellNo': 'wap'}, inplace=True)
         SWAZ_waps_copy = SWAZ_waps.copy()
         SWAZ_waps_copy.drop('Depth', axis=1, inplace=True)
-          
+           
         ########-Filter out WAPs that OR have a screen depth <=well_depth or a bore depth of <=well_depth (the or condition is needed because not all Wells have screens).
         print('Filtering wells with a depth <= %s meter...' %well_depth)
         SWAZ_waps_xm = SWAZ_waps.loc[SWAZ_waps['Depth']<=well_depth, ['wap']]
@@ -328,29 +328,29 @@ class myHydroTool():
         gw_waps.drop_duplicates(inplace=True)
         gw_waps['take_type'] = 'Take Groundwater'
         SWAZ_waps_xm = None; WAP_screens = None; del SWAZ_waps_xm, WAP_screens
-           
+            
         print('Extracting the Surface Water Take waps from the database...')
         sw_waps = mssql.rd_sql(self.server, self.database, 'CrcWapAllo', ['wap', 'take_type'], where_in={'take_type': ['Take Surface Water'], 'wap': list(SWAZ_waps['wap'])})
         sw_waps.drop_duplicates(inplace=True)
         print('Merging Surface Water Take and Groundwater Take waps...')
         SWAZ_waps = pd.concat([gw_waps, sw_waps])
         sw_waps = None; gw_waps = None; del sw_waps, gw_waps 
-          
-          
+           
+           
         #-Get all the consents related to the WAPs within the selected SWAZs
         print('Getting all consents belonging to the waps...')
         SWAZ_WAP_consents = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterWAPAlloc', col_names = ['RecordNo', 'WAP'], where_in={'WAP': list(SWAZ_waps['wap'])})
         SWAZ_WAP_consents.rename(columns={'RecordNo': 'crc', 'WAP': 'wap'}, inplace=True)
         crc = pd.unique(SWAZ_WAP_consents['crc'])
-      
+       
         #-Get all the consents from the F_ACC_Permit table from the DataWarehouse that are part of the SWAZ_WAP_consents selection
         df = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'F_ACC_Permit', col_names = ['B1_ALT_ID','fmDate','toDate','toDateText','Given Effect To','Expires','OriginalRecord','ParentAuthorisations','ChildAuthorisations','HolderAddressFullName'], where_in={'B1_ALT_ID': list(crc)})
         df['toDate'] = pd.to_datetime(df['toDate'], errors='coerce')
         df['fmDate'] = pd.to_datetime(df['fmDate'], errors='coerce')
         df['Given Effect To'] = pd.to_datetime(df['Given Effect To'], errors='coerce')
         df['Expires'] = pd.to_datetime(df['Expires'], errors='coerce')
-          
-          
+           
+           
         #-Select consents that were active between sdate and edate
         print('Filter consents that were active between %s and %s...' %(self.from_date.strftime('%d-%m-%Y'), self.to_date.strftime('%d-%m-%Y')))
         df1 = df.loc[(df['toDate']>pd.Timestamp(self.from_date)) & (df['fmDate']<=pd.Timestamp(self.to_date))]
@@ -359,7 +359,7 @@ class myHydroTool():
         df2 = df1.dropna(how='all')
         #-If 'Given Effect To' date is later than 'fmDate', then the 'fmDate' field is set to 'Given Effect To'
         df2.loc[(df2['fmDate'] < df2['Given Effect To']),['fmDate']]=  df2['Given Effect To']
-          
+           
         #-Unique consent numbers of 'OriginalRecord'
         ori_records = pd.unique(df2['OriginalRecord'])
         df2_columns = list(df2.columns)
@@ -384,7 +384,7 @@ class myHydroTool():
         df.rename(columns={'B1_ALT_ID': 'crc'}, inplace=True)
         #-it may be the case that given effect is empty because consent was never activated. This results in empty cells for 'Given Effect To'. These are dropped.
         df.dropna(inplace=True)
-          
+           
         #-Get dataframe of all water takes and diverts on consent level
         print('Retrieve take info on consent level...')
         crcAllo = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterConsent', 
@@ -402,7 +402,7 @@ class myHydroTool():
         #-consents for which complex_allo and lowflow_restriction have no value specified, it is assumed that these conditions are false and therefore set to 0.
         crcAllo.loc[pd.isna(crcAllo['complex_allo']),'complex_allo'] = 0
         crcAllo.loc[pd.isna(crcAllo['lowflow_restriction']),'lowflow_restriction'] = 0
-          
+           
         #-Get dataframe of all water takes and diverts on WAP level
         print('Retrieve take info on WAP level...')
         crcWapAllo = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterWAPAlloc',
@@ -424,44 +424,44 @@ class myHydroTool():
         crcWapAllo.dropna(how='all', inplace=True)
         #-Replace yes/no in in_sw_allo with 1/0
         crcWapAllo.replace({'in_sw_allo': yes_no_dict},inplace=True)
-          
+           
         #-merge selected consents with WAPs (takes and diverts)
         print('Merge details on WAP level...')
         df1 = pd.merge(df, crcWapAllo, how='left', on='crc')
         df1.drop_duplicates()
         crcWapAllo = None; del crcWapAllo
-          
+           
         #-merge SWAZ names
         SWAZ_waps_copy.loc[SWAZ_waps_copy.wap.isin(pd.unique(df1['wap']))]
         df1 = pd.merge(df1, SWAZ_waps_copy, how='left', on='wap')
         df1 = df1.loc[~pd.isna(df1['Activity'])]
-          
+           
         #-add the WAP NZTMX and NZTMY and SwazGroupName
         print('Adding NZTM and NZTMY coordinates...')
         extsite_df = mssql.rd_sql(self.server, self.database, 'ExternalSite', col_names = ['ExtSiteID', 'NZTMX', 'NZTMY', 'SwazGroupName'], where_in = {'ExtSiteID': list(df1['wap'])})
         df1 = pd.merge(df1, extsite_df, how='left', left_on='wap', right_on='ExtSiteID')
         df1.drop('ExtSiteID', axis=1, inplace=True)
         extsite_df = None; del extsite_df
-  
+   
         #-get stream depletion info and merge with df1
         print('Replace NZTMX and NZTMY for Groundwater Take WAPs with SD point coordinates...')
         gw_waps = pd.unique(df1.loc[df1['Activity']=='Take Groundwater', 'wap'])
         sd_df = mssql.rd_sql('sql2012prod05', 'Wells', 'Well_StreamDepletion_Locations', col_names = ['Well_No', 'NZTMX', 'NZTMY'], where_in = {'Well_No': list(gw_waps)})
         sd_df.rename(columns={'Well_No': 'wap'}, inplace=True)
         gw_waps = None; del gw_waps
-          
+           
         df2 = df1.loc[df1['Activity']=='Take Groundwater']
         df2.drop(['NZTMX', 'NZTMY'], axis=1, inplace=True)
         df2 = pd.merge(df2, sd_df, how='left', on='wap')
         df3 = df1.loc[df1['Activity']=='Take Surface Water']
         df1 = pd.concat([df2, df3])
         df2 = None; df3 = None; del df2, df3
-          
+           
         #-merge consent level dataframe
         df1 = pd.merge(df1, crcAllo, how='left', on=['crc','Activity'])
         crcAllo = None; del crcAllo
         df1.drop_duplicates(inplace=True)
-          
+           
         #-Get use type and irrigated area info
         print('Adding water use type and irrigated area...')
         hydro_crc_allo_df = mssql.rd_sql(self.server, self.database, 'CrcAllo', col_names = ['crc', 'take_type', 'allo_block', 'irr_area', 'use_type'], where_in = {'crc': list(df1['crc'])})
@@ -470,7 +470,7 @@ class myHydroTool():
         df1.drop_duplicates(inplace=True)
         df1.drop('take_type', axis=1, inplace=True)
         hydro_crc_allo_df = None; del hydro_crc_allo_df
-           
+            
         #-Get SD connection info and merge
         print('Adding SD connection info...')
         hydro_wap_allo_df = mssql.rd_sql(self.server, self.database, 'CrcWapAllo', col_names = ['crc', 'take_type', 'allo_block', 'wap', 'sd1_7', 'sd1_30', 'sd1_150'], 
@@ -483,7 +483,7 @@ class myHydroTool():
         df1.loc[(pd.isna(df1['sd1_150'])) & (df1['Activity'] == 'Take Groundwater'), 'sd1_150'] = 0
         df1.loc[df1['Activity'] == 'Take Surface Water', ['sd1_7', 'sd1_30', 'sd1_150']] = np.nan
         df1.drop_duplicates(inplace=True)
-            
+             
         ###-re-organize order of columns
         df_final = df1[['crc', 'fmDate', 'toDate', 'Given Effect To', 'HolderAddressFullName', 'Activity', 'use_type', 'irr_area [ha]', 'from_month', 'to_month', 'SWAZ', 'SwazGroupName',
                     'in_sw_allo', 'allo_block', 'lowflow_restriction', 'complex_allo', 'crc_ann_vol [m3]', 'crc_ann_vol_combined [m3]', 'wap', 'wap_max_rate [l/s]', 'wap_max_rate_pro_rata [l/s]', 'wap_max_vol_pro_rata [m3]',
@@ -493,13 +493,17 @@ class myHydroTool():
         df_final.loc[pd.isna(df_final['in_sw_allo']),'in_sw_allo'] = 0
         df1 = None; del df1
         
+#         df_final = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\Ashburton_crc_wap.csv', parse_dates=[1, 2, 3],dayfirst=True)
+#         print(df_final.head())
+        
+        
         #-keep only unique waps and coordinates for converting to geopandas dataframe
         print('Converting waps to GeoPandas DataFrame...')
         waps = df_final[['wap', 'SWAZ', 'SwazGroupName','NZTMX', 'NZTMY']].drop_duplicates()
         wap_sites = vector.xy_to_gpd(['wap', 'SWAZ', 'SwazGroupName','NZTMX', 'NZTMY'], 'NZTMX', 'NZTMY', waps,  crs=2193)
         wap_sites.drop(['NZTMX', 'NZTMY'], axis=1, inplace=True)
         waps = None; del waps
-        
+       
         #-Get the list of lowflow sites
         self.LF_sites = self.flow_sites_gdf['flow_site']
         #-Loop over the lowflow sites and join the waps that are located within the upstream catchment of that lowflow site
@@ -508,6 +512,7 @@ class myHydroTool():
         for j in self.LF_sites:
             #-read the catchment shapefile into a GeoPandas Dataframe
             catch = gpd.read_file(os.path.join(catch_path, j + '.shp'))
+            print(catch)
             #-join the waps located within that catchment
             waps_gdf, poly1 = vector.pts_poly_join(wap_sites, catch, 'flow_site')
             #-add the GeoPandas Dataframe to a list
