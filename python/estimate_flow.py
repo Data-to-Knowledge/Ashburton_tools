@@ -30,16 +30,19 @@ ts_summ_table = 'TSDataNumericDailySumm'
 ts_table = 'TSDataNumericDaily'
 site_table = 'ExternalSite'
 
+#-Some filters
 min_obs = 4
 buf_dist = 20000
 filter_winter_flow = False
+remove_stat_dates_dict = {'69': '1985-02-18'}
 
-savefig_path = r'C:\Active\Projects\Ashburton\naturalisation\results'
+savefig_path = r'C:\Active\Projects\Ashburton\naturalisation\results2'
 
 
 #-Get lowflow sites
-flow_sites_gdf = gpd.read_file(r'C:\Active\Projects\Ashburton\naturalisation\results\lowflow_sites.shp')
+flow_sites_gdf = gpd.read_file(r'C:\Active\Projects\Ashburton\naturalisation\results2\lowflow_sites.shp')
 flow_sites = flow_sites_gdf.flow_site.tolist()
+print(flow_sites)
 
 ## Read in datasettypes
 datasets = mssql.rd_sql(server, database, dataset_type_table, ['DatasetTypeID', 'CTypeID'], where_in={'FeatureID': [1], 'MTypeID': [2], 'CTypeID': [1, 2], 'DataCodeID': [1]})
@@ -77,7 +80,7 @@ all_recorder_flowsites = pd.unique(all_recorder_flowsites.ExtSiteID).tolist()
 all_recorder_flowsites =  mssql.rd_sql(server, database, site_table, ['ExtSiteID', 'NZTMX', 'NZTMY'], where_in={'ExtSiteID': all_recorder_flowsites})
 all_recorder_flowsites_gdf = vector.xy_to_gpd('ExtSiteID', 'NZTMX', 'NZTMY', all_recorder_flowsites)
 all_recorder_flowsites_buffer_gdf = vector.sel_sites_poly(all_recorder_flowsites_gdf, man_sites_buffer_gdf)
-all_recorder_flowsites_buffer_gdf.to_file(r'C:\Active\Projects\Ashburton\naturalisation\results\test.shp')
+all_recorder_flowsites_buffer_gdf.to_file(r'C:\Active\Projects\Ashburton\naturalisation\results2\test.shp')
 all_recorder_flowsites = None; all_recorder_flowsites_gdf = None; del all_recorder_flowsites, all_recorder_flowsites_gdf  
 
 
@@ -122,7 +125,14 @@ df_final.dropna(how='all', inplace=True)
 
 #-remove zero records
 df_final[df_final==0] = np.nan
-df_final.dropna(how='all', inplace=True)
+
+if remove_stat_dates_dict:
+    #-remove unreliable values using dictionaty of stations and dates
+    df_final.reset_index(inplace=True)
+    for s in remove_stat_dates_dict.keys():
+        stat_date = remove_stat_dates_dict[s]
+        df_final.loc[(df_final['DateTime']==stat_date), s] = np.nan
+    df_final.set_index('DateTime', inplace=True)
 
 #-keep only winter flows for estimating correlations
 if filter_winter_flow:
@@ -131,6 +141,7 @@ if filter_winter_flow:
     df_final.set_index('DateTime', inplace=True)
     df_final = df_final.loc[(df_final.Month>4) & (df_final.Month<10)]
 
+df_final.dropna(how='all', inplace=True)
 
 # #-keep only values equal or below the median
 # for j in all_recorder_flowsites_buffer_gdf.ExtSiteID.tolist():
@@ -140,9 +151,9 @@ if filter_winter_flow:
 
 
 
-df_final.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df_all.csv')
+df_final.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results2\df_all.csv')
 
-#df_final = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\df.csv', index_col=0, parse_dates=True, dayfirst=True)
+#df_final = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results2\df.csv', index_col=0, parse_dates=True, dayfirst=True)
 
 #-loop over the lowflow sites and calculate regressions
 df_regression = pd.DataFrame(columns=['y', 'x', 'mean_y', 'mean_x', 'nobs', 'rmse', 'Adj. R2-squared', 'p-value', 'slope', 'intercept', 'power', 'fittype'])
@@ -226,8 +237,8 @@ sel_df = None; del sel_df
 #-remove negative correlations
 df_regression.loc[df_regression['Adj. R2-squared']<0.,:] = np.nan
 df_regression.dropna(how='all', inplace=True)
-df_regression.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test.csv', index=False)
-#df_regression = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test.csv', dtype={'x': object, 'y': object})             
+df_regression.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results2\test.csv', index=False)
+#df_regression = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results2\test.csv', dtype={'x': object, 'y': object})             
  
  
 #-loop over lowflow sites, and select best four fits by sorting on R2, rmse, nobs
@@ -239,8 +250,8 @@ for j in flow_sites:
     df_regression_best = pd.concat([df_regression_best, sel_df])
 sel_df = None; del sel_df
     
-df_regression_best.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test_best.csv', index=False)
-#df_regression_best = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\test_best.csv', dtype={'x': object, 'y': object})
+df_regression_best.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results2\test_best.csv', index=False)
+#df_regression_best = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results2\test_best.csv', dtype={'x': object, 'y': object})
 
 #-make 6 plots for each site to visually pick the best
 unique_y = pd.unique(df_regression_best['y'])
