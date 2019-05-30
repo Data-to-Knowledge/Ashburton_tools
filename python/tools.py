@@ -147,7 +147,7 @@ class myHydroTool():
             self.date_allo_usage = pd.read_csv(os.path.join(self.results_path, self.config.get('ESTIMATE_USAGE', 'estimated_usage_csv')), parse_dates=True, dayfirst=True)
 #        print(self.date_allo_usage)
 
-        print(self.flow_sites_gdf)
+
         
         
             
@@ -339,7 +339,7 @@ class myHydroTool():
            
         #-Get all the consents related to the WAPs within the selected SWAZs
         print('Getting all consents belonging to the waps...')
-        SWAZ_WAP_consents = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterWAPAlloc', col_names = ['RecordNo', 'WAP'], where_in={'WAP': list(SWAZ_waps['wap'])})
+        SWAZ_WAP_consents = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterWAPAlloc_Static', col_names = ['RecordNo', 'WAP'], where_in={'WAP': list(SWAZ_waps['wap'])})
         SWAZ_WAP_consents.rename(columns={'RecordNo': 'crc', 'WAP': 'wap'}, inplace=True)
         crc = pd.unique(SWAZ_WAP_consents['crc'])
        
@@ -387,10 +387,15 @@ class myHydroTool():
            
         #-Get dataframe of all water takes and diverts on consent level
         print('Retrieve take info on consent level...')
-        crcAllo = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterConsent', 
+#         crcAllo = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterConsent', 
+#                                      col_names = ['RecordNo', 'Activity', 'B1_PER_ID3', 'Consented Annual Volume (m3/year)','Combined Annual Volume', 'Complex Allocation',
+#                                                   'Has a low flow restriction condition?'],
+#                                      where_in={'RecordNo': list(df['crc'])})
+        #-ON 31-05-2019, SOME CHANGES TO THE DATAWAREHOUSE TABLES WERE MADE, SO THEREFORE _STATIC TABLES ARE USED TO MAKE THE SCRIPT STILL WORK
+        crcAllo = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterConsent_Static', 
                                      col_names = ['RecordNo', 'Activity', 'B1_PER_ID3', 'Consented Annual Volume (m3/year)','Combined Annual Volume', 'Complex Allocation',
                                                   'Has a low flow restriction condition?'],
-                                     where_in={'RecordNo': list(df['crc'])})
+                                     where_in={'RecordNo': list(df['crc'])})        
         crcAllo.rename(columns={'RecordNo': 'crc', 'Consented Annual Volume (m3/year)': 'crc_ann_vol [m3]', 'Combined Annual Volume': 'crc_ann_vol_combined [m3]',
                                 'Complex Allocation': 'complex_allo', 'Has a low flow restriction condition?': 'lowflow_restriction'}, inplace=True)
         #-Consents with consented annual volume of 0 are incorrect. An annual volume of 0 is not possible, and should be interpreted as no annual volume is present in the consent conditions.
@@ -405,7 +410,7 @@ class myHydroTool():
            
         #-Get dataframe of all water takes and diverts on WAP level
         print('Retrieve take info on WAP level...')
-        crcWapAllo = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterWAPAlloc',
+        crcWapAllo = mssql.rd_sql('sql2012prod03', 'DataWarehouse', 'D_ACC_Act_Water_TakeWaterWAPAlloc_Static',
                                         col_names = ['RecordNo', 'Activity', 'From Month', 'To Month', 'Allocation Block', 'WAP', 'Max Rate for WAP (l/s)', 
                                                      'Max Rate Pro Rata (l/s)', 'Max Vol Pro Rata (m3)', 'Consecutive Day Period', 'Include in SW Allocation?', 'First Stream Depletion Rate'],
                                         where_in={'RecordNo': list(df['crc']), 'WAP': list(SWAZ_waps['wap']), 'Activity': ['Take Surface Water', 'Take Groundwater']})
@@ -512,7 +517,6 @@ class myHydroTool():
         for j in self.LF_sites:
             #-read the catchment shapefile into a GeoPandas Dataframe
             catch = gpd.read_file(os.path.join(catch_path, j + '.shp'))
-            print(catch)
             #-join the waps located within that catchment
             waps_gdf, poly1 = vector.pts_poly_join(wap_sites, catch, 'flow_site')
             #-add the GeoPandas Dataframe to a list
