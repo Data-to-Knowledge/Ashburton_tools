@@ -13,6 +13,7 @@ import datetime as dt
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from matplotlib.ticker import FormatStrFormatter
+import python.estimate_flow as estimate_flow
 
 #-Authorship information-########################################################################################################################
 __author__ = 'Wilco Terink'
@@ -145,7 +146,17 @@ class myHydroTool():
             self.estimate_usage()
         else:
             self.date_allo_usage = pd.read_csv(os.path.join(self.results_path, self.config.get('ESTIMATE_USAGE', 'estimated_usage_csv')), parse_dates=True, dayfirst=True)
-#        print(self.date_allo_usage)
+        ######################################################################################################################################
+        
+        #################-CORRELATIONS FOR SITES THAT DO NOT HAVE A RECORDER-################################################################
+        estimate_correlations = self.config.getint('FLOW_CORRELATIONS','estimate_correlations')
+        if estimate_correlations:
+            estimate_flow.getCorrelations(self)
+        else:
+            self.best_regressions_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'correlations_csv')))
+            self.flow_ts_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')), parse_dates=True, index_col=0, dayfirst=True)
+        ######################################################################################################################################
+
 
 
         
