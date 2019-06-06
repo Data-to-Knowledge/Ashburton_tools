@@ -20,7 +20,7 @@ __author__ = 'Wilco Terink'
 __copyright__ = 'Wilco Terink'
 __version__ = '1.0'
 __email__ = 'wilco.terink@ecan.govt.nz'
-__date__ ='May 2019'
+__date__ ='June 2019'
 #################################################################################################################################################
 
 
@@ -499,19 +499,25 @@ class myHydroTool():
         df1.loc[(pd.isna(df1['sd1_150'])) & (df1['Activity'] == 'Take Groundwater'), 'sd1_150'] = 0
         df1.loc[df1['Activity'] == 'Take Surface Water', ['sd1_7', 'sd1_30', 'sd1_150']] = np.nan
         df1.drop_duplicates(inplace=True)
+        
+        #-Get distance, transmissivity, and storativity for wells and merge
+        print('Get distance, transmissivity, and storativity for wells and merge...')
+        waps = pd.unique(df1.loc[df1['Activity']=='Take Groundwater','wap']).tolist()
+        sd_df = mssql.rd_sql('sql2012prod05', 'Wells', 'Well_StreamDepletion_Locations', col_names = ['Well_No', 'Distance','T_Estimate','S'], where_in = {'Well_No': waps})
+        sd_df.drop_duplicates(inplace=True)
+        sd_df.rename(columns={'Well_No': 'wap'}, inplace=True)
+        df1 = pd.merge(df1, sd_df, how='left', on='wap')
+        sd_df = None; waps = None; del waps, sd_df 
+        
              
         ###-re-organize order of columns
         df_final = df1[['crc', 'fmDate', 'toDate', 'Given Effect To', 'HolderAddressFullName', 'Activity', 'use_type', 'irr_area [ha]', 'from_month', 'to_month', 'SWAZ', 'SwazGroupName',
                     'in_sw_allo', 'allo_block', 'lowflow_restriction', 'complex_allo', 'crc_ann_vol [m3]', 'crc_ann_vol_combined [m3]', 'wap', 'wap_max_rate [l/s]', 'wap_max_rate_pro_rata [l/s]', 'wap_max_vol_pro_rata [m3]',
-                    'wap_return_period [d]', 'first_sd_rate [l/s]', 'sd1_7', 'sd1_30', 'sd1_150','NZTMX', 'NZTMY']]
+                    'wap_return_period [d]', 'first_sd_rate [l/s]', 'sd1_7', 'sd1_30', 'sd1_150', 'Distance','T_Estimate', 'S', 'NZTMX', 'NZTMY']]
         df_final.loc[pd.isna(df_final['complex_allo']),'complex_allo'] = 0
         df_final.loc[pd.isna(df_final['lowflow_restriction']),'lowflow_restriction'] = 0
         df_final.loc[pd.isna(df_final['in_sw_allo']),'in_sw_allo'] = 0
         df1 = None; del df1
-        
-#         df_final = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results\Ashburton_crc_wap.csv', parse_dates=[1, 2, 3],dayfirst=True)
-#         print(df_final.head())
-        
         
         #-keep only unique waps and coordinates for converting to geopandas dataframe
         print('Converting waps to GeoPandas DataFrame...')

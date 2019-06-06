@@ -13,8 +13,8 @@ __date__ ='May 2019'
 
  
 # #-Converting GeoTiff to PCraster        
-# fin = r'C:\Active\Projects\Ashburton\GIS\flow_sites_modified.tif'        
-# fout = r'C:\Active\Projects\Ashburton\GIS\flow_sites_modified.map'
+# fin = r'C:\Active\Projects\Ashburton\GIS\rec_rivers_250m_downstream_only_modified_OShea.tif'        
+# fout = r'C:\Active\Projects\Ashburton\GIS\rec_rivers_250m_downstream_only_modified_OShea.map'
 # tif_to_pcr(fin, fout)       
 
 ashburton = myHydroTool()

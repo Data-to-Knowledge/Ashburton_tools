@@ -139,9 +139,6 @@ def getCorrelations(self):
      
     #-create a copy of all gauged and recorded flow (before filtering) to make it accessible in the main class
     self.flow_ts_df = df_final.copy()
-    self.flow_ts_df.reset_index(inplace=True)
-    self.flow_ts_df = self.flow_ts_df.loc[(self.flow_ts_df.DateTime>=self.from_date) & (self.flow_ts_df.DateTime<=self.to_date)]
-    self.flow_ts_df.set_index('DateTime', inplace=True)
     self.flow_ts_df.to_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')))
      
     #-remove zero records
@@ -245,7 +242,7 @@ def getCorrelations(self):
     df_regression.loc[df_regression['Adj. R2-squared']<0.,:] = np.nan
     df_regression.dropna(how='all', inplace=True)
       
-    #-loop over lowflow sites, and select best four fits by sorting on R2, rmse, nobs
+    #-loop over lowflow sites, and select best six fits by sorting on R2, rmse, nobs
     self.best_regressions_df = pd.DataFrame(columns=df_regression.columns)
     for j in flow_sites:
         sel_df = df_regression.loc[df_regression.y == j]
