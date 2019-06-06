@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from pdsql import mssql
+from math import pi, cos, sin, acos, tan
 
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
@@ -15,6 +16,28 @@ ts_summ_table = 'TSDataNumericDailySumm'
 ts_table = 'TSDataNumericDaily'
 
 catch_area = 13319000  # m2
+lat = -43.88
+Gsc = 0.0820
+ 
+def hargreaves(df, lat, Gsc, site):
+    df[site] = np.nan
+    for i in df.iterrows():
+        DayNo = i[0].dayofyear
+        LatRad = lat * (pi / 180)
+        dr = 1 + 0.033 * cos((2 * pi * DayNo) /  365)
+        delta = 0.409 * sin(((2 * pi * DayNo) / 365) - 1.39)
+        omegas = acos(-1 * tan(LatRad) * tan(delta))
+        ra = ((24 * 60) / pi) * Gsc * dr * (omegas * sin(LatRad) * sin(delta) + cos(LatRad) * cos(delta) * sin(omegas))
+        tmax = i[1]['tmax']
+        tmin = i[1]['tmin']
+        tavg = (tmax + tmin)/2
+        ETref = np.maximum(0.0023 * 0.408 * ra * (tavg + 17.8) * (np.maximum(tmax - tmin, 0))**0.5, 0)
+        df.loc[i[0], site] = ETref
+    
+    return df
+
+    
+
 
 
 #######-Flow data for 1688218
@@ -49,7 +72,7 @@ sel_P_sites = [39005, 39845, 4763, 4762, 4761, 4760, 4759, 4758, 4757, 4756, 389
 P_ts = mssql.rd_sql(server, database, ts_table, col_names=['ExtSiteID', 'DateTime', 'Value'], where_in={'DatasetTypeID': [15, 38, 3068, 4554], 'ExtSiteID': sel_P_sites})
 P_ts.DateTime = pd.to_datetime(P_ts.DateTime)
 
-###############-ETr
+###############-ETr according to Penman
 # et_sites = mssql.rd_sql(server, database, ts_summ_table, col_names=['ExtSiteID'], where_in={'DatasetTypeID': [103, 24, 3082]})
 # et_sites = pd.unique(et_sites.ExtSiteID).tolist()
 # et_sites = mssql.rd_sql(server, database, 'ExternalSite', col_names=['ExtSiteID', 'NZTMX', 'NZTMY'], where_in={'ExtSiteID': et_sites})
@@ -60,10 +83,29 @@ sel_et_sites = [26170, 38974, 39661, 39845, 41200, 4764]
 et_ts = mssql.rd_sql(server, database, ts_table, col_names=['ExtSiteID', 'DateTime', 'Value'], where_in={'DatasetTypeID': [103, 24, 3082], 'ExtSiteID': sel_et_sites})
 et_ts.DateTime = pd.to_datetime(et_ts.DateTime)
 
- 
 
-##################-add precipitation and et to dataframe
+#######################-Tmax and Tmin for calculating ETr according to Hargreaves
+# tmax_sites = mssql.rd_sql(server, database, ts_summ_table, col_names=['ExtSiteID'], where_in={'DatasetTypeID': [86, 18, 3064]})
+# tmax_sites = pd.unique(tmax_sites.ExtSiteID).tolist()
+# 
+# tmin_sites = mssql.rd_sql(server, database, ts_summ_table, col_names=['ExtSiteID'], where_in={'DatasetTypeID': [87, 20, 3065]})
+# tmin_sites = pd.unique(tmin_sites.ExtSiteID).tolist()
+# 
+# tmax_tmin_sites = tmax_sites.copy()
+# for i in tmax_tmin_sites:
+#     if i not in tmin_sites:
+#         tmax_tmin_sites.remove(i)
+# tmax_tmin_sites = mssql.rd_sql(server, database, 'ExternalSite', col_names=['ExtSiteID', 'NZTMX', 'NZTMY'], where_in={'ExtSiteID': tmax_tmin_sites})
+# tmax_tmin_sites.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\all_tmax_tmin_sites.csv')
 
+sel_tmax_tmin_sites = [26170, 38974, 39845, 41200, 4764, 4778, 4780]
+tmax_ts = mssql.rd_sql(server, database, ts_table, col_names=['ExtSiteID', 'DateTime', 'Value'], where_in={'DatasetTypeID': [86, 18, 3064], 'ExtSiteID': sel_tmax_tmin_sites})
+tmax_ts.DateTime = pd.to_datetime(tmax_ts.DateTime)
+tmin_ts = mssql.rd_sql(server, database, ts_table, col_names=['ExtSiteID', 'DateTime', 'Value'], where_in={'DatasetTypeID': [87, 20, 3065], 'ExtSiteID': sel_tmax_tmin_sites})
+tmin_ts.DateTime = pd.to_datetime(tmin_ts.DateTime)
+
+
+##################-add precipitation and et (both penman and hargreaves) to dataframe
 df_final = ts.copy()
 for p in sel_P_sites:
     sel_P = P_ts.loc[P_ts.ExtSiteID==str(p), ['DateTime', 'Value']]
@@ -73,17 +115,37 @@ for p in sel_P_sites:
 df_final['Pavg [mm/d]'] = df_final.iloc[:,1::].mean(axis=1)
 #-keep only average Precip
 df_final = df_final[['Flow [m3/s]', 'Pavg [mm/d]']]
+#-Add ET according to Penman
 for e in sel_et_sites:
     sel_et = et_ts.loc[et_ts.ExtSiteID==str(e), ['DateTime', 'Value']]
     sel_et.set_index('DateTime', inplace=True)
     sel_et.rename(columns={'Value': e}, inplace=True)
     df_final[[e]] = sel_et
-df_final['ETavg [mm/d]'] = df_final.iloc[:,2::].mean(axis=1)
-#-keep only average ET
-df_final = df_final[['Flow [m3/s]', 'Pavg [mm/d]','ETavg [mm/d]']]
+df_final['ET penmann avg [mm/d]'] = df_final.iloc[:,2::].mean(axis=1)
+#-keep only average Penman ET
+df_final = df_final[['Flow [m3/s]', 'Pavg [mm/d]','ET penmann avg [mm/d]']]
 df_final.reset_index(inplace=True)
 df_final.drop_duplicates(inplace=True)
 df_final.set_index('DateTime', inplace=True)
+#-add hargreaves ET
+for s in sel_tmax_tmin_sites:
+    tmx = tmax_ts.loc[tmax_ts.ExtSiteID==str(s)]
+    tmx.drop('ExtSiteID', axis=1, inplace=True)
+    tmx.rename(columns={'Value': 'tmax'}, inplace=True)
+    tmx.set_index('DateTime', inplace=True)
+    tmn = tmin_ts.loc[tmin_ts.ExtSiteID==str(s)]
+    tmn.drop('ExtSiteID', axis=1, inplace=True)
+    tmn.rename(columns={'Value': 'tmin'}, inplace=True)
+    tmn.set_index('DateTime', inplace=True)
+    tcombined = pd.concat([tmx, tmn], axis=1)
+    tcombined.dropna(inplace=True)
+    tcombined = hargreaves(tcombined, lat, Gsc, s)
+    tcombined.drop(['tmax', 'tmin'], axis=1, inplace=True)
+    df_final[[s]] = tcombined
+#-keep only average Hargreaves ET    
+df_final['ET Hargreaves avg [mm/d]'] = df_final[sel_tmax_tmin_sites].mean(axis=1)
+df_final.drop(sel_tmax_tmin_sites, inplace=True, axis=1)
+
 
 ##################-add upstream takes to flow data
 
