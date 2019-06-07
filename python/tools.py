@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from matplotlib.ticker import FormatStrFormatter
 import python.estimate_flow as estimate_flow
+from python.stream_depletion import SD
 
 #-Authorship information-########################################################################################################################
 __author__ = 'Wilco Terink'
@@ -119,7 +120,7 @@ class myHydroTool():
         if create_wap_ts:
             self.wapTS()
         else:
-            self.wap_ts_metered_df = pd.read_csv(os.path.join(self.results_path, self.config.get('CRC_WAP', 'wap_ts_csv')), index_col=0, parse_dates=True, dayfirst=True)
+            self.wap_ts_metered_df = pd.read_csv(os.path.join(self.results_path, self.config.get('CRC_WAP', 'wap_ts_csv')), index_col=0, parse_dates=[0], dayfirst=True)
         ######################################################################################################################################
         
         #################-CALCULATE ABSTRACTION RATIOS USING THE RATIO OF METERED ABSTRACTION OVER MAXIMUM ALLOCATED RATE PER CRC/WAP-########
@@ -127,7 +128,7 @@ class myHydroTool():
         if crc_wap_ratio:
             self.abstraction_ratios()
         else:
-            self.date_crc_wap_ratio = pd.read_csv(os.path.join(self.results_path, self.config.get('CALC_RATIOS', 'crc_wap_ratio_csv')), parse_dates=True, dayfirst=True)
+            self.date_crc_wap_ratio = pd.read_csv(os.path.join(self.results_path, self.config.get('CALC_RATIOS', 'crc_wap_ratio_csv')), parse_dates=[0], dayfirst=True)
         plot_ratios = self.config.getint('CALC_RATIOS','plot_ratios')
         #-plot all daily ratios to check for extreme/unrealistic ratios
         if plot_ratios:
@@ -145,7 +146,7 @@ class myHydroTool():
         if estimate_usage:
             self.estimate_usage()
         else:
-            self.date_allo_usage = pd.read_csv(os.path.join(self.results_path, self.config.get('ESTIMATE_USAGE', 'estimated_usage_csv')), parse_dates=True, dayfirst=True)
+            self.date_allo_usage = pd.read_csv(os.path.join(self.results_path, self.config.get('ESTIMATE_USAGE', 'estimated_usage_csv')), parse_dates=[0], dayfirst=True)
         ######################################################################################################################################
         
         #################-CORRELATIONS FOR SITES THAT DO NOT HAVE A RECORDER-################################################################
@@ -154,8 +155,10 @@ class myHydroTool():
             estimate_flow.getCorrelations(self)
         else:
             self.best_regressions_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'correlations_csv')))
-            self.flow_ts_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')), parse_dates=True, index_col=0, dayfirst=True)
+            self.flow_ts_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')), parse_dates=[0], index_col=0, dayfirst=True)
         ######################################################################################################################################
+        
+        self.accuLowFlowSite()
 
 
 
@@ -916,7 +919,103 @@ class myHydroTool():
         csvF = os.path.join(self.results_path, self.config.get('ESTIMATE_USAGE','estimated_usage_csv'))
         self.date_allo_usage.to_csv(csvF, index=False)    
         print('Estimating usage completed successfully.')     
+        
+    
+    def accuLowFlowSite(self):
+        '''
+        Accumulates per day and lowflow site using all WAPs upstream of that lowflow site. It results in 3 dataframes:
+            - Maximum alloacated volume based on the maximum rates of the waps upstream of that site
+            - Usage (metered and estimated if metered is not availabed) of the waps upstream of that site
+            - Surface water take (direct surface water take + sd effect of groundwater takes)
+        
+        '''
+        
+        unique_waps = pd.unique(self.crc_wap_df.wap).tolist()
+        #-create 3 empty datframes to be filled
+        max_vol_df = pd.DataFrame(index=pd.date_range(self.from_date, self.to_date, freq='D'))
+        max_vol_df.index.names = ['Date']
+        usage_df = max_vol_df.copy()
+        sw_take_df = max_vol_df.copy()
+        
+        for wap in unique_waps:
+            print(wap)
+            df = self.date_allo_usage.loc[self.date_allo_usage.wap == wap, ['Date', 'Activity', 'crc_wap_max_vol [m3]', 'crc_wap_metered_abstraction_filled [m3]']]
+            activity = pd.unique(df['Activity'])[0]
+            df.drop('Activity', inplace=True, axis=1)
+            df = df.groupby('Date').sum()
 
+            max_vol = df[['crc_wap_max_vol [m3]']]
+            max_vol.rename(columns={'crc_wap_max_vol [m3]': wap}, inplace=True)
+            max_vol_df = pd.concat([max_vol_df, max_vol], axis=1)
+             
+            usage = df[['crc_wap_metered_abstraction_filled [m3]']]
+            usage.rename(columns={'crc_wap_metered_abstraction_filled [m3]': wap}, inplace=True)
+            usage_df = pd.concat([usage_df, usage], axis=1)
+            
+            df = None; del df
+            
+            #-for take use usage for sw takes, and sd rates if gw takes
+            if activity == 'Take Surface Water':
+                sw_take_df = pd.concat([sw_take_df, usage], axis=1)
+            else: #-calculate SD if it's a groundwater take
+                print('Calculating stream depletion for %s...' %wap)
+                usage.fillna(0, inplace=True)
+                qpump = usage[wap].to_numpy()
+                T = self.crc_wap_df.loc[self.crc_wap_df.wap == wap, 'T_Estimate'].to_numpy()[0]
+                S = self.crc_wap_df.loc[self.crc_wap_df.wap == wap, 'S'].to_numpy()[0]
+                D = self.crc_wap_df.loc[self.crc_wap_df.wap == wap, 'Distance'].to_numpy()[0]
+                sd = SD(D, S, T, qpump)
+                usage[wap] = sd
+                sw_take_df = pd.concat([sw_take_df, usage], axis=1)
+            
+            max_vol = None; usage = None; qpump = None; sd = None; del max_vol, usage, qpump, sd
+
+        max_vol_df.fillna(0, inplace=True)
+        usage_df.fillna(0, inplace=True)
+        sw_take_df.fillna(0, inplace=True)
+        
+        max_vol_df.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\max_vol_df.csv')
+        usage_df.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\usage_df.csv')
+        sw_take_df.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\sw_take_df.csv')
+        
+            
+ 
+ 
+ 
+#         #-get the IDs of the flow sites for which to calculate the accumulated usage per day
+#         lf_sites= pd.unique(self.flow_sites_gdf.flow_site).tolist()
+#         
+#         
+#         
+#         
+#         
+#         #-3 empty dataframes to be filled with the accumulated usage per lowflow site
+#         self.lf_max_vol_df = pd.DataFrame(index=pd.date_range(self.from_date, self.to_date, freq='D'), columns=lf_sites)
+#         self.lf_usage_df = self.lf_max_vol_df.copy()
+#         self.lf_sw_take_df = self.lf_max_vol_df.copy()
+        
+        
+
+        
+        
+        
+#         #-loop over sites
+#         for lf in lf_sites:
+#             #-get waps upstream of that lowflow site
+#             waps_lf = pd.unique(self.waps_gdf.loc[self.waps_gdf.flow_site == lf, 'wap']).tolist()
+#             
+#             #-empty dataframe to fill with data of the individual waps for this lf site
+#             waps_max_vol_df = pd.DataFrame(index=pd.date_range(self.from_date, self.to_date, freq='D'), columns=waps_lf)
+#             waps_max_vol_df.index.names = ['Date']
+#             
+#             waps_usage_df = waps_max_vol_df.copy()
+#             waps_sw_take_df = waps_max_vol_df.copy()
+# 
+#             #-loop over the waps for that lowflow site
+#             for wap in waps_lf:
+#                 print(wap)
+#                 #-get the data
+#                 df = self.date_allo_usage.loc[self.date_allo_usage.wap == wap, ['Date', 'Activity', 'crc_wap_max_vol [m3]', 'crc_wap_metered_abstraction_filled [m3]']]
 
         
                 

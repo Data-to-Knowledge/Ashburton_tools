@@ -159,6 +159,9 @@ crc_wap_details.drop_duplicates(inplace=True)
 date_allo_usage = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\Ashburton_date_allo_usage.csv', parse_dates=True, index_col=0, dayfirst=True)
 date_allo_usage = date_allo_usage[['wap', 'crc_wap_metered_abstraction_filled [m3]']]
 date_allo_usage = date_allo_usage.loc[date_allo_usage.wap.isin(upstream_waps)]
+date_allo_usage.reset_index(inplace=True)
+date_allo_usage = date_allo_usage.loc[(date_allo_usage.Date>=minDate) & (date_allo_usage.Date<=maxDate)]
+date_allo_usage.set_index('Date', inplace=True)
 
 #-add the stream depletion based on usage
 gw_waps = pd.unique(crc_wap_details.loc[crc_wap_details.Activity == 'Take Groundwater', 'wap']).tolist()
@@ -172,6 +175,7 @@ for wap in gw_waps:
     df_sel.reset_index(inplace=True)
 
     sd_df = pd.merge(sd_df, df_sel, how='left', on='DateTime')
+    sd_df.fillna(0, inplace=True)
  
     qpump = sd_df[wap].to_numpy()
     T = crc_wap_details.loc[crc_wap_details.wap == wap, 'T_Estimate'].to_numpy()[0]
