@@ -158,15 +158,14 @@ class myHydroTool():
             self.flow_ts_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')), parse_dates=[0], index_col=0, dayfirst=True)
         ######################################################################################################################################
         
-        self.accuLowFlowSite()
 
-
-
-        
-        
-            
-                
-
+        accu_LowFlowSite = self.config.getint('ACCU_LOWFLOW_SITE','accu_LowFlowSite')
+        if accu_LowFlowSite:
+            self.accuLowFlowSite()
+        else:
+            self.lf_max_vol_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'lf_max_vol_csv')), index_col=0, parse_dates=[0], dayfirst=True)
+            self.lf_usage_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'lf_usage_csv')), index_col=0, parse_dates=[0], dayfirst=True)
+            self.lf_sw_loss_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'lf_sw_loss_csv')), index_col=0, parse_dates=[0], dayfirst=True)
 
 
     def create_lowflow_sites_shp(self):
@@ -926,37 +925,41 @@ class myHydroTool():
         Accumulates per day and lowflow site using all WAPs upstream of that lowflow site. It results in 3 dataframes:
             - Maximum alloacated volume based on the maximum rates of the waps upstream of that site
             - Usage (metered and estimated if metered is not availabed) of the waps upstream of that site
-            - Surface water take (direct surface water take + sd effect of groundwater takes)
+            - Surface water loss (direct surface water take + sd effect of groundwater takes)
         
         '''
+        
+        print('Accumulating maximum allocated volume, usage, and surface water loss per flowflow site...')
+        
+        accu_cumecs = self.config.getint('ACCU_LOWFLOW_SITE', 'accu_cumecs')
         
         unique_waps = pd.unique(self.crc_wap_df.wap).tolist()
         #-create 3 empty datframes to be filled
         max_vol_df = pd.DataFrame(index=pd.date_range(self.from_date, self.to_date, freq='D'))
         max_vol_df.index.names = ['Date']
         usage_df = max_vol_df.copy()
-        sw_take_df = max_vol_df.copy()
-        
+        sw_loss_df = max_vol_df.copy()
+          
         for wap in unique_waps:
-            print(wap)
+            print('Processing %s...' %wap)
             df = self.date_allo_usage.loc[self.date_allo_usage.wap == wap, ['Date', 'Activity', 'crc_wap_max_vol [m3]', 'crc_wap_metered_abstraction_filled [m3]']]
             activity = pd.unique(df['Activity'])[0]
             df.drop('Activity', inplace=True, axis=1)
             df = df.groupby('Date').sum()
-
+  
             max_vol = df[['crc_wap_max_vol [m3]']]
             max_vol.rename(columns={'crc_wap_max_vol [m3]': wap}, inplace=True)
             max_vol_df = pd.concat([max_vol_df, max_vol], axis=1)
-             
+               
             usage = df[['crc_wap_metered_abstraction_filled [m3]']]
             usage.rename(columns={'crc_wap_metered_abstraction_filled [m3]': wap}, inplace=True)
             usage_df = pd.concat([usage_df, usage], axis=1)
-            
+              
             df = None; del df
-            
-            #-for take use usage for sw takes, and sd rates if gw takes
+              
+            #-for loss use usage for sw takes, and sd rates if gw takes
             if activity == 'Take Surface Water':
-                sw_take_df = pd.concat([sw_take_df, usage], axis=1)
+                sw_loss_df = pd.concat([sw_loss_df, usage], axis=1)
             else: #-calculate SD if it's a groundwater take
                 print('Calculating stream depletion for %s...' %wap)
                 usage.fillna(0, inplace=True)
@@ -966,63 +969,76 @@ class myHydroTool():
                 D = self.crc_wap_df.loc[self.crc_wap_df.wap == wap, 'Distance'].to_numpy()[0]
                 sd = SD(D, S, T, qpump)
                 usage[wap] = sd
-                sw_take_df = pd.concat([sw_take_df, usage], axis=1)
-            
+                sw_loss_df = pd.concat([sw_loss_df, usage], axis=1)
             max_vol = None; usage = None; qpump = None; sd = None; del max_vol, usage, qpump, sd
 
+        #-fill NaNs with 0
         max_vol_df.fillna(0, inplace=True)
         usage_df.fillna(0, inplace=True)
-        sw_take_df.fillna(0, inplace=True)
+        sw_loss_df.fillna(0, inplace=True)
+          
+        if accu_cumecs: #-convert to m3/s
+            print('Converting m3/day to m3/s...')
+            max_vol_df = max_vol_df / (24*3600)
+            usage_df = usage_df / (24*3600)
+            sw_loss_df = sw_loss_df / (24*3600)
         
-        max_vol_df.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\max_vol_df.csv')
-        usage_df.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\usage_df.csv')
-        sw_take_df.to_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\sw_take_df.csv')
+        save_wap_ts = self.config.getint('ACCU_LOWFLOW_SITE','save_wap_ts')
+        if save_wap_ts:
+            wap_max_vol_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_max_vol_csv'))
+            wap_usage_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_usage_csv'))
+            wap_sw_loss_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_sw_loss_csv'))
+            max_vol_df.to_csv(wap_max_vol_csv)
+            usage_df.to_csv(wap_usage_csv)
+            sw_loss_df.to_csv(wap_sw_loss_csv)
         
+#         max_vol_df = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\max_vol_df.csv', parse_dates=[0], index_col=0, dayfirst=True)
+#         usage_df = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\usage_df.csv', parse_dates=[0], index_col=0, dayfirst=True)
+#         sw_loss_df = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\sw_loss_df.csv', parse_dates=[0], index_col=0, dayfirst=True)
+        
+        #-get the IDs of the flow sites for which to calculate the accumulated usage per day
+        lf_sites= pd.unique(self.flow_sites_gdf.flow_site).tolist()
+
+        #-3 empty dataframes to be filled with the accumulated usage per lowflow site
+        self.lf_max_vol_df = pd.DataFrame(index=pd.date_range(self.from_date, self.to_date, freq='D'), columns=lf_sites); self.lf_max_vol_df.index.names = ['Date']
+        self.lf_usage_df = self.lf_max_vol_df.copy();
+        self.lf_sw_loss_df = self.lf_max_vol_df.copy()
+        
+        #-loop over sites
+        for lf in lf_sites:
+            print('Acummulating for lowflow site %s...' %lf)
+            #-get waps upstream of that lowflow site
+            waps_lf = pd.unique(self.waps_gdf.loc[self.waps_gdf.flow_site == lf, 'wap']).tolist()
+
+            #-Sum of max volume for the waps of that lowflow site
+            df = max_vol_df[waps_lf]
+            df = df.sum(axis=1)
+            self.lf_max_vol_df[lf] = df
+            df = None; del df
             
- 
- 
- 
-#         #-get the IDs of the flow sites for which to calculate the accumulated usage per day
-#         lf_sites= pd.unique(self.flow_sites_gdf.flow_site).tolist()
-#         
-#         
-#         
-#         
-#         
-#         #-3 empty dataframes to be filled with the accumulated usage per lowflow site
-#         self.lf_max_vol_df = pd.DataFrame(index=pd.date_range(self.from_date, self.to_date, freq='D'), columns=lf_sites)
-#         self.lf_usage_df = self.lf_max_vol_df.copy()
-#         self.lf_sw_take_df = self.lf_max_vol_df.copy()
+            #-Sum of usage for the waps of that lowflow site
+            df = usage_df[waps_lf]
+            df = df.sum(axis=1)
+            self.lf_usage_df[lf] = df
+            df = None; del df
+            
+            #-Sum of usage for the waps of that lowflow site
+            df = sw_loss_df[waps_lf]
+            df = df.sum(axis=1)
+            self.lf_sw_loss_df[lf] = df
+            df = None; del df
         
+        #-Write to csv files
+        lf_max_vol_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE','lf_max_vol_csv'))
+        lf_usage_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE','lf_usage_csv'))
+        lf_sw_loss_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE','lf_sw_loss_csv'))
         
+        self.lf_max_vol_df.to_csv(lf_max_vol_csv)
+        self.lf_usage_df.to_csv(lf_usage_csv)
+        self.lf_sw_loss_df.to_csv(lf_sw_loss_csv)
 
-        
-        
-        
-#         #-loop over sites
-#         for lf in lf_sites:
-#             #-get waps upstream of that lowflow site
-#             waps_lf = pd.unique(self.waps_gdf.loc[self.waps_gdf.flow_site == lf, 'wap']).tolist()
-#             
-#             #-empty dataframe to fill with data of the individual waps for this lf site
-#             waps_max_vol_df = pd.DataFrame(index=pd.date_range(self.from_date, self.to_date, freq='D'), columns=waps_lf)
-#             waps_max_vol_df.index.names = ['Date']
-#             
-#             waps_usage_df = waps_max_vol_df.copy()
-#             waps_sw_take_df = waps_max_vol_df.copy()
-# 
-#             #-loop over the waps for that lowflow site
-#             for wap in waps_lf:
-#                 print(wap)
-#                 #-get the data
-#                 df = self.date_allo_usage.loc[self.date_allo_usage.wap == wap, ['Date', 'Activity', 'crc_wap_max_vol [m3]', 'crc_wap_metered_abstraction_filled [m3]']]
-
-        
-                
-
-
-
-                
+             
+            
         
 
         
