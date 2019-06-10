@@ -44,7 +44,7 @@ flow_sites_gdf = gpd.read_file(r'C:\Active\Projects\Ashburton\naturalisation\res
 flow_sites = flow_sites_gdf.flow_site.tolist()
 print(flow_sites)
 
-sel_sites = ['168841', '1688218']
+sel_sites = ['1688218']
 
 #-Read time-series of flow
 flow_ts_df = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\recorder_gauged_flow.csv', parse_dates=True, index_col=0, dayfirst=True)
@@ -106,11 +106,11 @@ ts_df = None; df_short_group = None; del ts_df, df_short_group
 #-rolling mean
 df_final = df_final.rolling(window=3, center=True).mean()
 
-#-keep only winter flows for estimating correlations
-df_final.reset_index(inplace=True)
-df_final['Month'] = df_final['DateTime'].dt.strftime('%m').astype(np.int)
-df_final.set_index('DateTime', inplace=True)
-df_final = df_final.loc[(df_final.Month>4) & (df_final.Month<10)]
+# #-keep only winter flows for estimating correlations
+# df_final.reset_index(inplace=True)
+# df_final['Month'] = df_final['DateTime'].dt.strftime('%m').astype(np.int)
+# df_final.set_index('DateTime', inplace=True)
+# df_final = df_final.loc[(df_final.Month>4) & (df_final.Month<10)]
 df_final.dropna(how='all', inplace=True)
 
 #-concat the flow data to it (flow sites are identified under 'flow_sites' and gwl sites under ts_df_sites)

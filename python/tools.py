@@ -13,6 +13,7 @@ import datetime as dt
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from matplotlib.ticker import FormatStrFormatter
+import matplotlib.dates as mdates
 import python.estimate_flow as estimate_flow
 from python.stream_depletion import SD
 
@@ -158,7 +159,7 @@ class myHydroTool():
             self.flow_ts_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')), parse_dates=[0], index_col=0, dayfirst=True)
         ######################################################################################################################################
         
-
+        #################-ACCUMULATE MAXIMUM ALLOCATED VOLUME, USAGE, AND SURFACE WATER LOSS PER LOWFLOW SITE-################################
         accu_LowFlowSite = self.config.getint('ACCU_LOWFLOW_SITE','accu_LowFlowSite')
         if accu_LowFlowSite:
             self.accuLowFlowSite()
@@ -166,6 +167,12 @@ class myHydroTool():
             self.lf_max_vol_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'lf_max_vol_csv')), index_col=0, parse_dates=[0], dayfirst=True)
             self.lf_usage_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'lf_usage_csv')), index_col=0, parse_dates=[0], dayfirst=True)
             self.lf_sw_loss_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'lf_sw_loss_csv')), index_col=0, parse_dates=[0], dayfirst=True)
+        ######################################################################################################################################
+        
+        ################-FIGURES TO ANALYSE UNCERTAINTY IN ESTIMATES-#########################################################################    
+        analyse_uncertainty = self.config.getint('USAGE_UNCERTAINTY', 'analyse_uncertainty')
+        if analyse_uncertainty:            
+            self.uncertaintyEstimates()
 
 
     def create_lowflow_sites_shp(self):
@@ -812,7 +819,7 @@ class myHydroTool():
         csvF = os.path.join(self.results_path, self.config.get('CALC_RATIOS', 'crc_wap_ratio_grouped_csv'))
         
         #-only keep records where a ratio was calculated (i.e. records without a metered abstraction are removed)
-        date_crc_wap_ratio = self.date_crc_wap_ratio.loc[~pd.isna(self.date_crc_wap_ratio['ratio'])]
+        date_crc_wap_ratio = self.date_crc_wap_ratio.loc[pd.notna(self.date_crc_wap_ratio['ratio'])]
         try:
             self.thresh = self.config.getfloat('CALC_RATIOS', 'ratio_threshold')
         except:
@@ -822,6 +829,7 @@ class myHydroTool():
             print('Removing ratios > %.2f' %self.thresh)
             date_crc_wap_ratio = date_crc_wap_ratio.loc[date_crc_wap_ratio['ratio']<=self.thresh]
         date_crc_wap_ratio['month'] = pd.DatetimeIndex(date_crc_wap_ratio['Date']).month
+        
         #-group by use_type, SWAZ, month, and calculate average
         self.crc_wap_ratio_grouped = date_crc_wap_ratio.groupby(['use_type', 'SWAZ', 'month']).mean()
         self.crc_wap_ratio_grouped.drop(['in_sw_allo', 'lowflow_restriction', 'crc_wap_max_vol [m3]', 'crc_wap_metered_abstraction [m3]', 'metered [yes/no]'], axis=1, inplace=True)
@@ -889,8 +897,11 @@ class myHydroTool():
         if self.thresh:
             print('Replacing metered values having ratios > %.2f with NaN' %self.thresh)
             self.date_allo_usage.loc[self.date_allo_usage['ratio']>self.thresh, 'crc_wap_metered_abstraction [m3]'] = np.nan
+            self.date_allo_usage.loc[self.date_allo_usage['ratio']>self.thresh, 'metered [yes/no]'] = np.nan
         #-Create column for estimated abstraction
         self.date_allo_usage['crc_wap_estimated_abstraction [m3]'] = np.nan
+        
+
         
         #-use_types and swazs
         use_types = pd.unique(self.date_allo_usage['use_type'].tolist())
@@ -906,6 +917,7 @@ class myHydroTool():
                         self.date_allo_usage.loc[(self.date_allo_usage['month']==m) & (self.date_allo_usage['use_type']==u) & (self.date_allo_usage['SWAZ']==s), 'month_ratio'] = v
                     except:
                         pass
+                    
         print('Estimating abstraction using monthly ratio and maximum daily volume...')
         #-estimate the demand by multiplying 'crc_wap_max_vol [m3]' with 'month_ratio'
         self.date_allo_usage['crc_wap_estimated_abstraction [m3]'] =   self.date_allo_usage['crc_wap_max_vol [m3]'] * self.date_allo_usage['month_ratio']
@@ -930,8 +942,6 @@ class myHydroTool():
         '''
         
         print('Accumulating maximum allocated volume, usage, and surface water loss per flowflow site...')
-        
-        accu_cumecs = self.config.getint('ACCU_LOWFLOW_SITE', 'accu_cumecs')
         
         unique_waps = pd.unique(self.crc_wap_df.wap).tolist()
         #-create 3 empty datframes to be filled
@@ -977,24 +987,17 @@ class myHydroTool():
         usage_df.fillna(0, inplace=True)
         sw_loss_df.fillna(0, inplace=True)
           
-        if accu_cumecs: #-convert to m3/s
-            print('Converting m3/day to m3/s...')
-            max_vol_df = max_vol_df / (24*3600)
-            usage_df = usage_df / (24*3600)
-            sw_loss_df = sw_loss_df / (24*3600)
+        print('Converting m3/day to m3/s...')
+        max_vol_df = max_vol_df / (24*3600)
+        usage_df = usage_df / (24*3600)
+        sw_loss_df = sw_loss_df / (24*3600)
         
-        save_wap_ts = self.config.getint('ACCU_LOWFLOW_SITE','save_wap_ts')
-        if save_wap_ts:
-            wap_max_vol_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_max_vol_csv'))
-            wap_usage_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_usage_csv'))
-            wap_sw_loss_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_sw_loss_csv'))
-            max_vol_df.to_csv(wap_max_vol_csv)
-            usage_df.to_csv(wap_usage_csv)
-            sw_loss_df.to_csv(wap_sw_loss_csv)
-        
-#         max_vol_df = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\max_vol_df.csv', parse_dates=[0], index_col=0, dayfirst=True)
-#         usage_df = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\usage_df.csv', parse_dates=[0], index_col=0, dayfirst=True)
-#         sw_loss_df = pd.read_csv(r'C:\Active\Projects\Ashburton\naturalisation\results4\sw_loss_df.csv', parse_dates=[0], index_col=0, dayfirst=True)
+        wap_max_vol_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_max_vol_csv'))
+        wap_usage_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_usage_csv'))
+        wap_sw_loss_csv = os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_sw_loss_csv'))
+        max_vol_df.to_csv(wap_max_vol_csv)
+        usage_df.to_csv(wap_usage_csv)
+        sw_loss_df.to_csv(wap_sw_loss_csv)
         
         #-get the IDs of the flow sites for which to calculate the accumulated usage per day
         lf_sites= pd.unique(self.flow_sites_gdf.flow_site).tolist()
@@ -1036,12 +1039,150 @@ class myHydroTool():
         self.lf_max_vol_df.to_csv(lf_max_vol_csv)
         self.lf_usage_df.to_csv(lf_usage_csv)
         self.lf_sw_loss_df.to_csv(lf_sw_loss_csv)
+        
+    
+    def uncertaintyEstimates(self):
+        '''
+        Make some plots to compare:
+            - Allocated volumes with how much of that is covered by meters.
+            - Estimated values with metered values.
+        All units will be in m3/s. Figures will be saved in the results_path folder.
+        '''
 
-             
+        #-color maps for plotting
+        colors = [(31, 119, 180), (174, 199, 232), (255, 127, 14), (255, 187, 120),    
+                 (44, 160, 44), (152, 223, 138), (214, 39, 40), (255, 152, 150),    
+                 (148, 103, 189), (197, 176, 213), (140, 86, 75), (196, 156, 148),    
+                 (227, 119, 194), (247, 182, 210), (127, 127, 127), (199, 199, 199),    
+                 (188, 189, 34), (219, 219, 141), (23, 190, 207), (158, 218, 229)]
+        for i in range(len(colors)):
+            r, g, b = colors[i]
+            colors[i] = (r / 255., g / 255., b / 255.)
+        
+        
+        #-get the IDs of the flow sites for which to calculate the accumulated usage per day
+        lf_sites= pd.unique(self.flow_sites_gdf.flow_site).tolist()
+        
+        print('Creating figures to compare maximum allocated volume with how much of that volume is covered by meters...')
+        ####-ONE DATAFRAME FOR ALLOCATED MAXIMUM VOLUME PER LOWFLOW SITE AND ONE DATAFRAME FOR POTENTIAL ALLOCATED VOLUME THAT CAN BE MEASURED BY METER INSTALLED
+        #-dataframe with flag if wap is metered for that day (Y=1, 0=No)
+        wap_metered_flag_df = self.wap_ts_metered_df * 0 + 1
+        wap_metered_flag_df.fillna(0, inplace=True)
+        #-dataframe with maximum allocated volume per wap and day
+        max_vol_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_max_vol_csv')), index_col=0, parse_dates=[0], dayfirst=True)
+        #-multiply with metered flag to get the potential volume that can be metered per wap and day
+        pot_metered_vol_df = max_vol_df * wap_metered_flag_df
+        #-create dataframes for lowflow site totals
+        max_vol_lf = pd.DataFrame(index = max_vol_df.index, columns = lf_sites)
+        pot_metered_vol_lf = max_vol_lf.copy()
+        for lf in lf_sites:
+            #-get waps upstream of that lowflow site
+            waps_lf = pd.unique(self.waps_gdf.loc[self.waps_gdf.flow_site == lf, 'wap']).tolist()
+            #-fill maximum allocated volume
+            df = max_vol_df[waps_lf]
+            df = df.sum(axis=1)
+            max_vol_lf[lf] = df
+            #-fill potential measurable volume if meter is installed
+            df = pot_metered_vol_df[waps_lf]
+            df = df.sum(axis=1)
+            pot_metered_vol_lf[lf] = df
+        max_vol_df = None; pot_metered_vol_df = None; del max_vol_df, pot_metered_vol_df 
+        
+        max_vol_lf['Year'] = pd.DatetimeIndex(max_vol_lf.index).year
+        max_vol_lf['Month'] = pd.DatetimeIndex(max_vol_lf.index).month
+        max_vol_lf = max_vol_lf.groupby(['Year', 'Month']).mean()
+        
+        pot_metered_vol_lf['Year'] = pd.DatetimeIndex(pot_metered_vol_lf.index).year
+        pot_metered_vol_lf['Month'] = pd.DatetimeIndex(pot_metered_vol_lf.index).month
+        pot_metered_vol_lf = pot_metered_vol_lf.groupby(['Year', 'Month']).mean()
+        
+        drange = pd.date_range(self.from_date, self.to_date, freq='M')#.strftime('%Y-%b')
+        years = mdates.YearLocator()   # every year
+        months = mdates.MonthLocator()  # every month
+        years_fmt = mdates.DateFormatter('%Y')
+        #-plot max allocated volume per month year and how much of that volume can potentially be metered
+        for lf in lf_sites:
+            print('Create figure for lowflow site %s...' %lf)
+            fig, ax1 = plt.subplots()
+            ax1.plot(drange, max_vol_lf[lf], label='Maximum allocated', color='red')
+            ax1.plot(drange, pot_metered_vol_lf[lf], label='Potentially metered', color=colors[4])
+            ax1.xaxis.set_major_locator(years)
+            ax1.xaxis.set_major_formatter(years_fmt)
+            ax1.xaxis.set_minor_locator(months)
+            ax1.set_xlim(drange[0], drange[-1])
+            ax1.set_xlabel('Date')
+            ax1.set_ylabel('Volume [m$^3$ s$^{-1}$]')
+            ax1.tick_params(axis='y', labelcolor='black')
+            ax2 = ax1.twinx()
+            ax2.set_ylabel('Volume metered [%]')
+            ax2.tick_params(axis='y', labelcolor='black')
+            ax2.plot(drange, (pot_metered_vol_lf[lf] / max_vol_lf[lf])*100, label='Potentially metered [%]', color=colors[1])
+            ax1.grid(True)
+            ax1.set_ylim([0, np.max(max_vol_lf[lf])])
+            ax2.set_ylim([0, 100])
+            plt.title(lf)
+            h1, l1 = ax1.get_legend_handles_labels()
+            h2, l2 = ax2.get_legend_handles_labels()
+            ax1.legend(h1+h2, l1+l2, loc='lower right')
+            fig.tight_layout()
+            plt.savefig(os.path.join(self.results_path, '%s_allocated_meter_coverage.png' %lf), dpi=300)
+
+        print('Creating figures for comparing estimated with metered volumes...')
+        ####-ONE DATAFRAME FOR METERED VOLUME PER LOWFLOW SITE AND ONE DATAFRAME FOR ESTIMATED VOLUME PER LOWFLOW SITE
+        #-dataframe for metered volumes
+        metered_df = pd.DataFrame(columns=wap_metered_flag_df.columns, index=wap_metered_flag_df.index)
+        #-dataframe for estimated volumes
+        estimated_df = pd.DataFrame(columns=wap_metered_flag_df.columns, index=wap_metered_flag_df.index)
+        for wap in wap_metered_flag_df.columns:
+            df = self.date_allo_usage.loc[(self.date_allo_usage.wap == wap) & (self.date_allo_usage['metered [yes/no]']==1), ['Date', 'crc_wap_metered_abstraction [m3]' ,'crc_wap_estimated_abstraction [m3]']]
+            df = df.groupby('Date').sum()
+            #-convert to m3/s
+            df = df  /(24*3600)
+            #-get the metered abstraction
+            df1 = df[['crc_wap_metered_abstraction [m3]']]
+            df1.rename(columns={'crc_wap_metered_abstraction [m3]': wap}, inplace=True)
+            metered_df[wap] = df1
+            #-get the estimated abstraction
+            df1 = df[['crc_wap_estimated_abstraction [m3]']]
+            df1.rename(columns={'crc_wap_estimated_abstraction [m3]': wap}, inplace=True)
+            estimated_df[wap] = df1
+
+        metered_df['Year'] = pd.DatetimeIndex(metered_df.index).year
+        metered_df['Month'] = pd.DatetimeIndex(metered_df.index).month
+        metered_df = metered_df.groupby(['Year', 'Month']).mean()
+         
+        estimated_df['Year'] = pd.DatetimeIndex(estimated_df.index).year
+        estimated_df['Month'] = pd.DatetimeIndex(estimated_df.index).month
+        estimated_df = estimated_df.groupby(['Year', 'Month']).mean()
+
+        for lf in lf_sites:
+            print('Create figure for lowflow site %s...' %lf)
+            #-get waps upstream of that lowflow site
+            waps_lf = pd.unique(self.waps_gdf.loc[self.waps_gdf.flow_site == lf, 'wap']).tolist()
+            #-first metered data
+            df1 = metered_df[waps_lf]
+            df1 = df1.sum(axis=1)
+            #-then estimated data
+            df2 = estimated_df[waps_lf]
+            df2 = df2.sum(axis=1)
             
-        
+            fig, ax1 = plt.subplots()
+            ax1.plot(drange, df1, label='Metered', color='red')
+            ax1.plot(drange, df2, label='Estimated', color=colors[4])
+            ax1.xaxis.set_major_locator(years)
+            ax1.xaxis.set_major_formatter(years_fmt)
+            ax1.xaxis.set_minor_locator(months)
+            ax1.set_xlim(drange[0], drange[-1])
+            ax1.set_xlabel('Date')
+            ax1.set_ylabel('Volume [m$^3$ s$^{-1}$]')
+            ax1.tick_params(axis='y', labelcolor='black')
+            ax1.grid(True)
+            #ax1.set_ylim([0, np.max(max_vol_lf[lf])])
+            plt.title(lf)
+            plt.legend(loc='upper left')
 
+            fig.tight_layout()
+            fig.tight_layout()
+            plt.savefig(os.path.join(self.results_path, '%s_metered_vs_estimated.png' %lf), dpi=300)
         
-        
-
-
+        print('Creating figures completed successfully.')
