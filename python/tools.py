@@ -134,7 +134,7 @@ class myHydroTool():
         #-plot all daily ratios to check for extreme/unrealistic ratios
         if plot_ratios:
             self.plot_ratios()
-        #-filter and groupby month, swaz, use_type
+        #-filter and groupby month, flow_site, use_type
         group_ratios = self.config.getint('CALC_RATIOS','group_ratios')
         if group_ratios:
             self.group_ratios()
@@ -553,6 +553,14 @@ class myHydroTool():
         #-Writing waps with lowflow sites to shapefile
         print('Writing waps with lowflow sites to %s...' %shpF)   
         self.waps_gdf.to_file(shpF)
+        
+        #-Add the lowflow site sub-catchment in which the wap is located (this is just the sub-catchment itself (so excluding any nested upstream catchments; it is required for grouping to calculate ratios)
+        catch = gpd.read_file(os.path.join(catch_path, 'sub_catchment_delineated.shp'))
+        waps_gdf, poly1 = vector.pts_poly_join(wap_sites, catch, 'flow_site')
+        waps_gdf = waps_gdf[['wap', 'flow_site']]
+        df_final = pd.merge(df_final, waps_gdf, how='left', on='wap')
+        df_final.drop_duplicates(inplace=True)
+        waps_gdf = None; del waps_gdf
 
         #-remove waps from df_final that do not have a lowflow site
         waps = pd.unique(self.waps_gdf['wap'])
@@ -621,6 +629,7 @@ class myHydroTool():
             - Activity
             - use_type
             - SWAZ
+            - flow_site
             - in_sw_allo
             - allo_block
             - lowflow_restriction
@@ -662,7 +671,7 @@ class myHydroTool():
         self.crc_wap_df.to_csv(csvF, index=False)
 
         #-Shorter column version of dataframe
-        crc_wap_df = self.crc_wap_df[['crc', 'fmDate', 'toDate', 'Activity', 'use_type', 'from_month', 'to_month', 'SWAZ', 'in_sw_allo', 'allo_block', 'lowflow_restriction', 'wap', 'wap_max_rate [l/s]']]        
+        crc_wap_df = self.crc_wap_df[['crc', 'fmDate', 'toDate', 'Activity', 'use_type', 'from_month', 'to_month', 'SWAZ', 'flow_site', 'in_sw_allo', 'allo_block', 'lowflow_restriction', 'wap', 'wap_max_rate [l/s]']]        
                   
         #-calculate maximum daily allowed volumes for crc/wap in m3
         crc_wap_df[['wap_max_vol [m3]']] = crc_wap_df[['wap_max_rate [l/s]']] * 86.4
@@ -697,6 +706,7 @@ class myHydroTool():
                 df_temp['Activity'] = c[1]['Activity']
                 df_temp['use_type'] = c[1]['use_type']
                 df_temp['SWAZ'] = c[1]['SWAZ']
+                df_temp['flow_site'] = c[1]['flow_site']
                 df_temp['in_sw_allo'] = c[1]['in_sw_allo']
                 df_temp['allo_block'] = c[1]['allo_block']
                 df_temp['lowflow_restriction'] = c[1]['lowflow_restriction']
@@ -777,7 +787,7 @@ class myHydroTool():
         print('Abstraction ratios successfully written to %s' %csvF)
        
 
-    def plot_ratios(self, swazs='all', use_type='all', max_ratio=20):
+    def plot_ratios(self, max_ratio=20):
         '''
         Make a histogram of the ratios to check for unrealistic ratios
         '''
@@ -794,15 +804,9 @@ class myHydroTool():
         ratio_df = self.date_crc_wap_ratio.copy()
         
         fig, ax = plt.subplots()
-        #b = np.arange(1, max_ratio+1, 0.5)
         b = np.arange(0, max_ratio+1, 0.5)
-        if (swazs=='all') and (use_type=='all'):
-            plt.hist(ratio_df['ratio'], density=True, bins=b, cumulative=True, color=colors[0], edgecolor='black')
-            plt.title('Ratios for all SWAZs and all use_types')
-        else:
-            ratio_df = ratio_df.loc[(ratio_df['SWAZ']==swazs) & (ratio_df['use_type']==use_type)]
-            plt.hist(ratio_df['ratio'], density=True, bins=b, cumulative=True, color=colors[0], edgecolor='black')
-            plt.title('Ratio for %s and use_type=%s' %(swazs, use_type))
+        plt.hist(ratio_df['ratio'], density=True, bins=b, cumulative=True, color=colors[0], edgecolor='black')
+        plt.title('Ratios for all WAPs and use_types')
         ax.set_xlabel('Ratio [-]')
         ax.set_ylabel('Cumulative density [-]')
         ax.set_xticks(np.arange(0, max_ratio+1, 1))
@@ -812,10 +816,10 @@ class myHydroTool():
         
     def group_ratios(self):
         '''
-        Group the ratios by use_type, SWAZ, and month. A filter may be applied to remove ratios above a threshold before grouping is done.
+        Group the ratios by use_type, flow_site, and month. A filter may be applied to remove ratios above a threshold before grouping is done.
         '''
         
-        print('Grouping ratios by use_type, SWAZ, and month...')
+        print('Grouping ratios by use_type, flow_site, and month...')
         csvF = os.path.join(self.results_path, self.config.get('CALC_RATIOS', 'crc_wap_ratio_grouped_csv'))
         
         #-only keep records where a ratio was calculated (i.e. records without a metered abstraction are removed)
@@ -830,41 +834,40 @@ class myHydroTool():
             date_crc_wap_ratio = date_crc_wap_ratio.loc[date_crc_wap_ratio['ratio']<=self.thresh]
         date_crc_wap_ratio['month'] = pd.DatetimeIndex(date_crc_wap_ratio['Date']).month
         
-        #-group by use_type, SWAZ, month, and calculate average
-        self.crc_wap_ratio_grouped = date_crc_wap_ratio.groupby(['use_type', 'SWAZ', 'month']).mean()
+        #-group by use_type, flow_site, month, and calculate average
+        self.crc_wap_ratio_grouped = date_crc_wap_ratio.groupby(['use_type', 'flow_site', 'month']).mean()
         self.crc_wap_ratio_grouped.drop(['in_sw_allo', 'lowflow_restriction', 'crc_wap_max_vol [m3]', 'crc_wap_metered_abstraction [m3]', 'metered [yes/no]'], axis=1, inplace=True)
         self.crc_wap_ratio_grouped.reset_index(inplace=True)
         self.crc_wap_ratio_grouped.to_csv(csvF, index=False)
         
-        #-Check if average ratio could be calculated for all combinations of SWAZs and use_types. If not, then use the mean of all SWAZs for that use_type
+        #-Check if average ratio could be calculated for all combinations of flow_sites and use_types. If not, then use the mean of all flow_sites for that use_type
         fill_missing_ratios = self.config.getint('CALC_RATIOS', 'fill_missing_ratios')
         if fill_missing_ratios:
             crc_wap_ratio_grouped_avg = self.crc_wap_ratio_grouped.groupby(['use_type','month']).mean()
             crc_wap_ratio_grouped_avg.reset_index(inplace=True)
             use_types = pd.unique(self.date_crc_wap_ratio['use_type']).tolist()
-            swazs = pd.unique(self.date_crc_wap_ratio['SWAZ']).tolist()
+            LFs = pd.unique(self.date_crc_wap_ratio['flow_site']).tolist()
             for u in use_types:
-                for s in swazs:
-                    t = self.crc_wap_ratio_grouped.loc[(self.crc_wap_ratio_grouped['use_type']==u) & (self.crc_wap_ratio_grouped['SWAZ']==s)]
+                for lf in LFs:
+                    t = self.crc_wap_ratio_grouped.loc[(self.crc_wap_ratio_grouped['use_type']==u) & (self.crc_wap_ratio_grouped['flow_site']==lf)]
                     if len(t)==0:
-                        tt = self.date_crc_wap_ratio.loc[(self.date_crc_wap_ratio['use_type']==u) & (self.date_crc_wap_ratio['SWAZ']==s)]
+                        tt = self.date_crc_wap_ratio.loc[(self.date_crc_wap_ratio['use_type']==u) & (self.date_crc_wap_ratio['flow_site']==lf)]
                         if len(tt)!=0:
-                            print('Average ratio was not calculated for use_type=%s and SWAZ=%s. Ratio is calculated using the average ratio of %s of the other SWAZs.' %(u,s,u))
+                            print('Average ratio was not calculated for use_type=%s and flow_site=%s. Ratio is calculated using the average ratio of %s of the other lowflow sites.' %(u,lf,u))
                             df = crc_wap_ratio_grouped_avg.loc[crc_wap_ratio_grouped_avg['use_type']==u].copy()
-                            df['SWAZ'] = s
-                            df1 = df[['use_type', 'SWAZ', 'month', 'ratio']]
+                            df['flow_site'] = lf
+                            df1 = df[['use_type', 'flow_site', 'month', 'ratio']]
                             self.crc_wap_ratio_grouped = pd.concat([self.crc_wap_ratio_grouped, df1], axis=0)
             self.crc_wap_ratio_grouped.to_csv(csvF, index=False)
         
-        #-Plot ratios for each use_type and SWAZ?
+        #-Plot ratios for each use_type and flow_site?
         plot_grouped_ratios = self.config.getint('CALC_RATIOS', 'plot_grouped_ratios')
         if plot_grouped_ratios:
-            #use_types = pd.unique(self.crc_wap_ratio_grouped['use_type'])
             use_types = pd.unique(self.crc_wap_ratio_grouped['use_type']).tolist()
-            swazs = pd.unique(self.crc_wap_ratio_grouped['SWAZ']).tolist()
+            LFs = pd.unique(self.crc_wap_ratio_grouped['flow_site']).tolist()
             for u in use_types:
-                for s in swazs:
-                    df = self.crc_wap_ratio_grouped.loc[(self.crc_wap_ratio_grouped['use_type']==u) & (self.crc_wap_ratio_grouped['SWAZ']==s),['month', 'ratio']]
+                for lf in LFs:
+                    df = self.crc_wap_ratio_grouped.loc[(self.crc_wap_ratio_grouped['use_type']==u) & (self.crc_wap_ratio_grouped['flow_site']==lf),['month', 'ratio']]
                     if len(df)>0:
                         fig, ax1 = plt.subplots()
                         ax1.set_xlabel('Month')
@@ -874,7 +877,7 @@ class myHydroTool():
                         ax1.set_xlim([1, 12])
                         ax1.set_xticks([i for i in range(1,13)])
                         ax1.set_ylim([0, np.max(df['ratio'])])
-                        plt.title(u + ' - ' + s)
+                        plt.title(u + ' - ' + lf)
                         ax1.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))  
                         fig.tight_layout()
                         plt.show()
@@ -901,20 +904,18 @@ class myHydroTool():
         #-Create column for estimated abstraction
         self.date_allo_usage['crc_wap_estimated_abstraction [m3]'] = np.nan
         
-
-        
-        #-use_types and swazs
+        #-use_types and lowflow sites
         use_types = pd.unique(self.date_allo_usage['use_type'].tolist())
-        swazs = pd.unique(self.date_allo_usage['SWAZ'].tolist())
+        LFs = pd.unique(self.date_allo_usage['flow_site'].tolist())
         #-fill the 'month_ratio' field
         print('Applying monthly ratios...')
         for m in range(1, 12+1):
             for u in use_types:
-                for s in swazs:
-                    print('Month %s, %s, %s' %(m,u,s))
+                for lf in LFs:
+                    print('Month %s, %s, %s' %(m,u,lf))
                     try:
-                        v = self.crc_wap_ratio_grouped.loc[(self.crc_wap_ratio_grouped['month']==m) & (self.crc_wap_ratio_grouped['use_type']==u) & (self.crc_wap_ratio_grouped['SWAZ']==s), ['ratio']].to_numpy()[0][0]
-                        self.date_allo_usage.loc[(self.date_allo_usage['month']==m) & (self.date_allo_usage['use_type']==u) & (self.date_allo_usage['SWAZ']==s), 'month_ratio'] = v
+                        v = self.crc_wap_ratio_grouped.loc[(self.crc_wap_ratio_grouped['month']==m) & (self.crc_wap_ratio_grouped['use_type']==u) & (self.crc_wap_ratio_grouped['flow_site']==lf), ['ratio']].to_numpy()[0][0]
+                        self.date_allo_usage.loc[(self.date_allo_usage['month']==m) & (self.date_allo_usage['use_type']==u) & (self.date_allo_usage['flow_site']==lf), 'month_ratio'] = v
                     except:
                         pass
                     
