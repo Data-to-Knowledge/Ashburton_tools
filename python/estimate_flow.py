@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import os
+import os, math
 import numpy as np
 import pandas as pd
 from pdsql import mssql
@@ -319,3 +319,156 @@ def getCorrelations(self):
                 plt.savefig(os.path.join(self.results_path, '%s_correlations_winteronly.png' %ySite), dpi=300)
             else:
                 plt.savefig(os.path.join(self.results_path, '%s_correlations.png' %ySite), dpi=300)
+                
+                
+                
+def estimateFlow(self):
+    '''
+    - Fill gaps in the recorder time-series using the most recent value until a recorded value appears again.
+    - Estimate flow for non-recorder sites using a csv-file with correlations.
+    - Writes results to csv-files for:
+        - Recorder flow time-series with gaps filled
+        - Estimated flow for non-recorder sites based on correlations between recorder sites and non-recorder sites
+        - Same as above, but then the extreme high estimates are filled with NaNs, and then filled with the most recent reliable estimate. This is based on the
+          90-percentile of flow of the main downstream flow site; i.e. when flow exceeds the 90-percentile for that site on a particular date, then the estimates
+          for all non-recorder sites are set to NaN for that same date.
+    - Creates hydrographs with corresponding statistics for the main downstream recorder site, and similarly for the non-recorder sites.
+    '''
+
+    #-Get the time-series for the recorder sites to be filled with the most recent recorded value    
+    flow_ts_df = self.flow_ts_df[self.rec_sites_buffer_gdf.ExtSiteID.tolist()]
+    
+    #-select one site to calculate statistics for
+    statistics_site = self.config.get('ESTIMATE_FLOW', 'statistics_site')
+    print('Calculating some statistics for the main site %s...' %statistics_site)
+    sel_df = flow_ts_df[[statistics_site]]
+    sel_df.reset_index(inplace=True)
+    sel_df = sel_df.loc[(sel_df.DateTime>=pd.Timestamp(self.from_date)) & (sel_df.DateTime<=pd.Timestamp(self.to_date))]
+    sel_df.set_index('DateTime', inplace=True)
+    sel_df.to_numpy()
+    p10 = np.nanpercentile(sel_df, 10)
+    p50 = np.nanpercentile(sel_df, 50)
+    p90 = np.nanpercentile(sel_df, 90)
+    #statistics_site_p90 = p90
+    avg = np.nanmean(sel_df)
+    print('Flow statistics for %s are:' %statistics_site)
+    print('\tP10 = %.2f cumecs' %p10)
+    print('\tP50 = %.2f cumecs' %p50)
+    print('\tP90 = %.2f cumecs' %p90)
+    print('\tMean = %.2f cumecs' %avg)
+    #-Plot streamflow for one site with statistics (percentiles and mean) for the period of interest
+    print('Creating hydrograph for the main site %s...' %statistics_site)
+    fig = plt.figure(figsize=(10, 8))
+    xdates = pd.date_range(self.from_date, self.to_date, freq='D')
+    plt.plot(xdates, sel_df, label='Recorded flow', linewidth=0.75)
+    plt.hlines(p10, xdates[0], xdates[-1], label='P10', color='red')
+    plt.hlines(p50, xdates[0], xdates[-1], label='P50', color='orange')
+    plt.hlines(p90, xdates[0], xdates[-1], label='P90', color='black')
+    plt.hlines(avg, xdates[0], xdates[-1], label='Mean', color='green', linestyles='dotted')
+    ymax = np.nanmax(sel_df)
+    plt.ylim([0, ymax])
+    plt.xlim([xdates[0], xdates[-1]])
+    plt.grid(True)
+    plt.xlabel('Date')
+    plt.ylabel('Flow [m$^3$ s$^{-1}$]')
+    plt.title(statistics_site)
+    plt.legend(loc='upper right')
+    xtext_pos = xdates[math.floor(len(xdates)/20)]
+    dy = ymax/15
+    plt.text(xtext_pos, ymax-dy, 'P10: %.2f' %p10)
+    plt.text(xtext_pos, ymax-1.5*dy, 'P50: %.2f' %p50)
+    plt.text(xtext_pos, ymax-2*dy, 'P90: %.2f' %p90)
+    plt.text(xtext_pos, ymax-2.5*dy, 'Mean: %.2f' %avg)
+    fig.tight_layout()
+    plt.savefig(os.path.join(self.results_path, '%s_hydrograph_stats.png' %statistics_site), dpi=300)
+    
+    #-FILL GAPS IN ALL RECORDER SITES   
+    print('Filling gaps in recorded flow series...')
+    flow_ts_df = flow_ts_df.fillna(method='pad')
+    flow_ts_df.reset_index(inplace=True)
+    flow_ts_df = flow_ts_df.loc[(flow_ts_df.DateTime>=pd.Timestamp(self.from_date)) & (flow_ts_df.DateTime<=pd.Timestamp(self.to_date))]
+    flow_ts_df.set_index('DateTime', inplace=True)
+    #-write filled time-series to csv file
+    csvF = os.path.join(self.results_path, self.config.get('ESTIMATE_FLOW', 'flow_filled_ts_csv'))
+    flow_ts_df.to_csv(csvF)
+    
+    #-ESTIMATE FLOW FOR THE NON-RECORDER SITES
+    #-best correlations to use
+    correlations_df = pd.read_csv(os.path.join(self.inputs_path, self.config.get('ESTIMATE_FLOW', 'correlations_csv')), dtype = {'x': object, 'y': object})
+    #-empty dataframe to be filled with estimated flow
+    flow_ts_estimated_df = pd.DataFrame(index=flow_ts_df.index)
+    flow_ts_estimated_df.index.names = ['DateTime']
+    for i in correlations_df.iterrows():
+        y = i[1]['y']
+        x = i[1]['x']
+        print('Estimating flow for %s...' %y)
+        fittype = i[1]['fittype']
+        xdata = flow_ts_df[x].to_numpy()
+        if fittype == 'power':
+            # y = ax^b
+            ydata = np.maximum(0, i[1]['slope'] * np.power(xdata, i[1]['power']))
+        else:
+            ydata = np.maximum(0, (i[1]['slope'] * xdata) + i[1]['intercept'])
+        flow_ts_estimated_df[y] = ydata
+    #-write to estimated flow to csv file    
+    csvF = os.path.join(self.results_path, self.config.get('ESTIMATE_FLOW', 'estimated_ts_csv'))
+    flow_ts_estimated_df.to_csv(csvF)
+    
+    #-MAKE FIGURES OF ESTIMATED FLOW
+    for y in flow_ts_estimated_df.columns:
+        print('Creating hydrograph for %s...' %y)
+        sel_df = flow_ts_estimated_df[[y]]
+        xdates = sel_df.index
+        sel_df.to_numpy()
+        p10 = np.nanpercentile(sel_df, 10)
+        p50 = np.nanpercentile(sel_df, 50)
+        p90 = np.nanpercentile(sel_df, 90)
+        avg = np.nanmean(sel_df)
+        print('Flow statistics for %s are:' %y)
+        print('\tP10 = %.2f cumecs' %p10)
+        print('\tP50 = %.2f cumecs' %p50)
+        print('\tP90 = %.2f cumecs' %p90)
+        print('\tMean = %.2f cumecs' %avg)
+        #-Plot streamflow for one site with statistics (percentiles and mean) for the period of interest
+        fig = plt.figure(figsize=(10, 8))
+        plt.plot(xdates, sel_df, label='Recorded flow', linewidth=0.75)
+        plt.hlines(p10, xdates[0], xdates[-1], label='P10', color='red')
+        plt.hlines(p50, xdates[0], xdates[-1], label='P50', color='orange')
+        plt.hlines(p90, xdates[0], xdates[-1], label='P90', color='black')
+        plt.hlines(avg, xdates[0], xdates[-1], label='Mean', color='green', linestyles='dotted')
+        ymax = np.nanmax(sel_df)
+        plt.ylim([0, ymax])
+        plt.xlim([xdates[0], xdates[-1]])
+        plt.grid(True)
+        plt.xlabel('Date')
+        plt.ylabel('Flow [m$^3$ s$^{-1}$]')
+        plt.title(y)
+        plt.legend(loc='upper right')
+        xtext_pos = xdates[math.floor(len(xdates)/20)]
+        dy = ymax/15
+        plt.text(xtext_pos, ymax-dy, 'P10: %.2f' %p10)
+        plt.text(xtext_pos, ymax-1.5*dy, 'P50: %.2f' %p50)
+        plt.text(xtext_pos, ymax-2*dy, 'P90: %.2f' %p90)
+        plt.text(xtext_pos, ymax-2.5*dy, 'Mean: %.2f' %avg)
+        fig.tight_layout()
+        plt.savefig(os.path.join(self.results_path, '%s_hydrograph_estimated.png' %y), dpi=300)
+    
+    print('Filling gaps and estimating flow has been comepleted.')  
+    ###-SECTION BELOW MIGHT NEED SOME IMPROVEMENT. CURRENTLY NOT USED BECAUSE DUE TO TRAVEL TIMES WE CANNOT CANCEL OUT VALUES IF FLOW ON THE MAIN SITE IS ABOVE THE THRESHOLD. THEN LIKELY
+    ###-FOR THE SITE OF INTEREST THE FLOW ON THE DAY BEFORE SHOULD BE CANCELLED. PROBABLY BETTER TO DETERMINE THE P90 THRESHOLD FOR EACH OF THE SITES INDIVIDUALLY, OR ....
+#     #################-REPEAT STEPS ABOVE, BUT THEN FILTER OUT FLOW ABOVE THE SELECT SITE P90 THRESHOLD
+#     mask = flow_ts_df[statistics_site]
+#     mask = mask>statistics_site_p90
+#     for y in flow_ts_estimated_df.columns:
+#         flow_ts_estimated_df.loc[mask, y] = np.nan
+#     flow_ts_estimated_df.fillna(method='pad', inplace=True)
+#     #-write to estimated flow to csv file with the high values replaced by NaN, and then filled by the most recent value    
+#     csvF = os.path.join(self.results_path, self.config.get('ESTIMATE_FLOW', 'estimated_ts_P90_cutoff_csv'))
+#     flow_ts_estimated_df.to_csv(csvF)
+    
+    
+    
+    
+    
+        
+        

@@ -150,15 +150,6 @@ class myHydroTool():
             self.date_allo_usage = pd.read_csv(os.path.join(self.results_path, self.config.get('ESTIMATE_USAGE', 'estimated_usage_csv')), parse_dates=[0], dayfirst=True)
         ######################################################################################################################################
         
-        #################-CORRELATIONS FOR SITES THAT DO NOT HAVE A RECORDER-################################################################
-        estimate_correlations = self.config.getint('FLOW_CORRELATIONS','estimate_correlations')
-        if estimate_correlations:
-            estimate_flow.getCorrelations(self)
-        else:
-            self.best_regressions_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'correlations_csv')))
-            self.flow_ts_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')), parse_dates=[0], index_col=0, dayfirst=True)
-        ######################################################################################################################################
-        
         #################-ACCUMULATE MAXIMUM ALLOCATED VOLUME, USAGE, AND SURFACE WATER LOSS PER LOWFLOW SITE-################################
         accu_LowFlowSite = self.config.getint('ACCU_LOWFLOW_SITE','accu_LowFlowSite')
         if accu_LowFlowSite:
@@ -173,6 +164,20 @@ class myHydroTool():
         analyse_uncertainty = self.config.getint('USAGE_UNCERTAINTY', 'analyse_uncertainty')
         if analyse_uncertainty:            
             self.uncertaintyEstimates()
+            
+        #################-CORRELATIONS FOR SITES THAT DO NOT HAVE A RECORDER-################################################################
+        estimate_correlations = self.config.getint('FLOW_CORRELATIONS','estimate_correlations')
+        if estimate_correlations:
+            estimate_flow.getCorrelations(self)
+        else:
+            self.best_regressions_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'correlations_csv')))
+            self.flow_ts_df = pd.read_csv(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'flow_ts_csv')), parse_dates=[0], index_col=0, dayfirst=True)
+            self.rec_sites_buffer_gdf = gpd.read_file(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'rec_sites_shp')))
+        ######################################################################################################################################
+        
+        estimate_flow_for_gauged_sites = self.config.getint('ESTIMATE_FLOW','estimate_flow_for_gauged_sites')
+        if estimate_flow_for_gauged_sites:
+            estimate_flow.estimateFlow(self)            
 
 
     def create_lowflow_sites_shp(self):
