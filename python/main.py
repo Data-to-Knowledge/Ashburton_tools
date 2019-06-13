@@ -18,6 +18,3 @@ __date__ ='May 2019'
 # tif_to_pcr(fin, fout)       
 
 ashburton = myHydroTool()
-
-#ashburton.plot_ratios(swazs='North Branch', use_type='stockwater')
-

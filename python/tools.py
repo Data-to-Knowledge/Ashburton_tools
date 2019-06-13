@@ -175,9 +175,16 @@ class myHydroTool():
             self.rec_sites_buffer_gdf = gpd.read_file(os.path.join(self.results_path, self.config.get('FLOW_CORRELATIONS', 'rec_sites_shp')))
         ######################################################################################################################################
         
+        ##################-ESTIMATE FLOW FOR NON-RECORDER SITES BASED ON CORRELATIONS FOUND BEFORE-###########################################
         estimate_flow_for_gauged_sites = self.config.getint('ESTIMATE_FLOW','estimate_flow_for_gauged_sites')
         if estimate_flow_for_gauged_sites:
-            estimate_flow.estimateFlow(self)            
+            estimate_flow.estimateFlow(self)     
+        ######################################################################################################################################
+            
+        ##################-CALCULATE SW LOSSES FOR DIFFERENT SCENARIOS WITH WAP COMBINATIONS PER LOWFLOW SITE-################################
+        calc_usage_scenarios = self.config.getint('USAGE_SCENARIOS','calc_usage_scenarios')
+        if calc_usage_scenarios:
+            self.usageScenarios()       
 
 
     def create_lowflow_sites_shp(self):
@@ -770,7 +777,8 @@ class myHydroTool():
         #-Calculate pro-rata distribution of metered abstraction to consent/wap level
         crc_wap_df['crc_wap_max_vol_ratio [-]'] = crc_wap_df['crc_wap_max_vol [m3]'] / crc_wap_df['wap_max_vol [m3]']
         crc_wap_df['crc_wap_metered_abstraction [m3]'] = crc_wap_df['wap_metered_abstraction [m3]'] * crc_wap_df['crc_wap_max_vol_ratio [-]']
-        crc_wap_df.drop(['wap_max_vol [m3]','wap_metered_abstraction [m3]','crc_wap_max_vol_ratio [-]',], axis=1, inplace=True)
+        #crc_wap_df.drop(['wap_max_vol [m3]','wap_metered_abstraction [m3]','crc_wap_max_vol_ratio [-]'], axis=1, inplace=True)
+        crc_wap_df.drop(['wap_max_vol [m3]','wap_metered_abstraction [m3]'], axis=1, inplace=True)
         
         #-Add column with ones if record is measured for that crc/wap/date yes (1) or no (0)
         crc_wap_df['metered [yes/no]'] = np.nan
@@ -1192,3 +1200,88 @@ class myHydroTool():
             plt.savefig(os.path.join(self.results_path, '%s_metered_vs_estimated.png' %lf), dpi=300)
         
         print('Creating figures completed successfully.')
+        
+        
+    def usageScenarios(self):
+        '''
+        Summarize losses (sw take + gw sd depletion) per scenario for each lowflow site using the WAPs within the associated catchment of that lowflow site (without upstream lowflow site catchments).
+        Uses a csv-file with the header corresponding to the scenarios, and the first column indicating the lowflow sites. The WAPs that need to be summarized are then found as values in the column.
+        '''
+        
+        #-read the csv-file with the usage scenarios into a pandas dataframe
+        scenario_df = pd.read_csv(os.path.join(self.inputs_path, self.config.get('USAGE_SCENARIOS', 'scenario_csv')))
+        #-columns for indexing
+        lf_col_name = self.config.get('USAGE_SCENARIOS', 'lf_col_name')
+        crc_col_name = self.config.get('USAGE_SCENARIOS', 'crc_col_name')
+        block_col_name = self.config.get('USAGE_SCENARIOS', 'block_col_name')
+        fill_block_value = self.config.get('USAGE_SCENARIOS', 'fill_block_value')
+        scenario_df.loc[pd.isna(scenario_df[block_col_name]), block_col_name] = fill_block_value
+        
+        #-drop columns not used for scenario output
+        scenario_cols = scenario_df.columns.tolist()
+        scenario_cols.remove(lf_col_name)
+        scenario_cols.remove(crc_col_name)
+        scenario_cols.remove(block_col_name)
+        
+        #-get the 'crc_wap_max_vol_ratio [-]' that defines the fraction of volume allocated to a certain consent if a wap is shared by multiple consents
+        crc_wap_vol_ratio = self.date_crc_wap_ratio[['Date', 'crc', 'wap', 'crc_wap_max_vol_ratio [-]']]
+        crc_wap_vol_ratio = crc_wap_vol_ratio.groupby(['crc', 'wap']).mean()
+        crc_wap_vol_ratio.reset_index(inplace=True)
+
+        #-get surface water loss per wap
+        sw_loss_df = pd.read_csv(os.path.join(self.results_path, self.config.get('ACCU_LOWFLOW_SITE', 'wap_sw_loss_csv')), index_col=0, parse_dates=[0], dayfirst=True)
+        
+        #-list for logging errors
+        log_list = []
+        
+        #-loop over the blocks
+        for b in pd.unique(scenario_df[block_col_name]).tolist():
+            #-loop over the scenario columns
+            for s in scenario_cols:
+                #-get shorter dataframe for scenario 's' and block 'b'
+                df_sel = scenario_df.loc[pd.notna(scenario_df[s]) & (scenario_df[block_col_name]==b), [lf_col_name, s, crc_col_name]]
+                #-list of unique low flow sites belonging to this scenario
+                unique_lf_sites = pd.unique(df_sel[lf_col_name]).tolist()
+                #-loop over the lowflow sites for this scenario
+                lf_df_tofill = pd.DataFrame(index=sw_loss_df.index)
+                for lf in unique_lf_sites:
+                    print('Processing block %s, scenario %s, and lowflow site %s...' %(b, s, lf))
+                    #-get waps for this lowflow site and consent numbers
+                    df_sel_lf = df_sel.loc[df_sel[lf_col_name]==lf, [s, crc_col_name]]
+                    #-empty dataframe to fill with wap loss for the particular lowflow site
+                    df_to_fill = pd.DataFrame(index=sw_loss_df.index)
+                    ct = 0
+                    for i in df_sel_lf.iterrows():
+                        wap = i[1][s].upper()
+                        crc= i[1][crc_col_name]
+                        #-if consent is found in list, then this wap is shared with multiple consents, and the wap pro-rata ratio should be used to multiply wap sw loss with
+                        if pd.notna(crc):
+                            try:
+                                wap_ratio = crc_wap_vol_ratio.loc[(crc_wap_vol_ratio['wap']==wap) & (crc_wap_vol_ratio['crc']==crc),'crc_wap_max_vol_ratio [-]'].to_numpy()[0]
+                            except:
+                                pass
+                        else:
+                            #-otherwise wap is only used by one consent and ratio = 1
+                            wap_ratio = 1
+                        try:
+                            df_to_fill[ct] = sw_loss_df[wap] * wap_ratio
+                            ct+=1
+                        except:
+                            if pd.isna(crc):
+                                eMsg = '%s is not found in the database extract' %(wap)
+                            else:
+                                eMsg = '%s with %s is not found' %(crc, wap)
+                            if eMsg not in log_list:
+                                log_list.append(eMsg)
+                    #-summarize over the waps
+                    df_to_fill = df_to_fill.sum(axis=1)
+                    lf_df_tofill[lf] = df_to_fill
+                    #-write to csv-file
+                lf_df_tofill.to_csv(os.path.join(self.results_path, '%s_%s_sw_loss.csv' %(b,s)))
+
+        #-write log messages to file        
+        f = open(os.path.join(self.results_path, 'Log_messages.log'), 'w')
+        for i in log_list:
+            f.write(i)
+            f.write('\n')
+        f.close()
