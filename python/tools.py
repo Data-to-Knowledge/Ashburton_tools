@@ -577,6 +577,7 @@ class myHydroTool():
         #-remove waps from df_final that do not have a lowflow site
         waps = pd.unique(self.waps_gdf['wap'])
         self.crc_wap_df = df_final.loc[df_final.wap.isin(waps)]
+        #self.crc_wap_df = df_final
         csvF = os.path.join(self.results_path, self.config.get('CRC_WAP', 'crc_wap_csv'))
         self.crc_wap_df.to_csv(csvF, index=False)
         
