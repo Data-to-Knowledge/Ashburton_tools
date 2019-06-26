@@ -46,7 +46,6 @@ def SD(L, S, T, Qpump):
         - sd_matrix = stream depletion array (1-dimensional array) with same length as Qpump 
     '''
     
-    
     sdf = (L**2)*S/T
     t = np.arange(1,len(Qpump)+1,1)
 
@@ -59,10 +58,9 @@ def SD(L, S, T, Qpump):
             dQ[ix] = Qpump[ix]
         else:
             dQ[ix] = Qpump[ix] - Qpump[ix-1]
-             
         for j in t:
-            jx = np.argwhere(t==j)[0][0]
             if j>=i:
+                jx = np.argwhere(t==j)[0][0]
                 y = erfc(sqrt(sdf/(4*(j-i+1))))
                 y = y * dQ[ix]
                 sd_matrix[ix,jx] = y
